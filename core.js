@@ -1,6 +1,6 @@
 import { freshSocial, normalizeSocial } from './social.js';
-import { normalizeApi } from './api-config.js';
-export const VERSION = '0.4.0';
+import { apiDefaults, normalizeApi } from './api-config.js';
+export const VERSION = '0.4.1';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -11,7 +11,7 @@ export function freshState() {
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
-        api:normalizeApi(),
+        api:apiDefaults(),
         autoSummary: false, summaryEvery: 40, summaryKeep: 12, summaryInstruction: '',
     } };
 }

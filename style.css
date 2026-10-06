@@ -114,11 +114,14 @@
 #mc-root .mc-panel { width:min(404px,calc(100% - 32px)); max-height:850px; border:7px solid #202837; outline:2px solid #b5c7e4; border-radius:41px; background:radial-gradient(ellipse at 0 25%,#eee7ff 0,transparent 60%),radial-gradient(ellipse at 100% 85%,#b4d0ff 0,transparent 60%),linear-gradient(150deg,#dbeaff,#dcdffb 65%,#d6e9fd); box-shadow:0 0 0 4px #e7effc80,0 22px 70px #15253f50; }
 #mc-root .mc-panel::before { content:''; position:absolute; inset:0; pointer-events:none; z-index:0; background:linear-gradient(142deg,transparent 35%,#ffffff42 35.2%,transparent 58%),linear-gradient(30deg,transparent 53%,#ffffff40 53.2%,transparent 68%); }
 #mc-root .mc-panel>* { position:relative; }
-#mc-root .mc-header { height:40px; gap:7px; padding:4px 12px; cursor:grab; }
+#mc-root .mc-header { height:48px; gap:7px; padding:2px 8px; cursor:grab; }
 #mc-root .mc-header strong { font-size:11px; letter-spacing:1px; margin-right:auto; }
-#mc-root .mc-header .mc-back { font-size:28px; min-width:24px; }
+#mc-root .mc-header .mc-back { width:44px; min-width:44px; min-height:44px; }
+#mc-root .mc-header button { display:grid; place-items:center; }
+#mc-root .mc-header button svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+#mc-root .mc-header .mc-back svg { width:28px; height:28px; }
 #mc-root .mc-island { width:73px; height:19px; background:#151d2c; top:8px; }
-#mc-root .mc-header [data-action='close'] { width:29px; min-height:29px; min-width:29px; font-size:21px; border:1px solid #ffffffaa; border-radius:50%; background:#ffffff4f; }
+#mc-root .mc-header [data-action='close'] { width:44px; min-height:44px; min-width:44px; border:0; border-radius:0; background:transparent; box-shadow:none; }
 #mc-root .mc-home-button { display:grid; place-items:center; height:28px; min-height:28px; width:100%; border:0; padding:0; border-radius:0; background:transparent; flex-shrink:0; }
 #mc-root .mc-home-button span { display:block; width:95px; height:4px; background:#42598199; border-radius:9px; }
 #mc-root .mc-home-button:hover { background:transparent; }

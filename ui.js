@@ -1,4 +1,4 @@
-import { API_PARAMETERS, normalizeApi } from './api-config.js';
+import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
 import { VERSION } from './core.js';
 import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
 
@@ -12,7 +12,7 @@ export class Interface {
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
-            <header class="mc-header"><button type="button" class="mc-back" data-action="tab" data-tab="home" aria-label="返回首页">‹</button><strong id="mc-app-title">映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机">×</button></header>
+            <header class="mc-header"><button type="button" class="mc-back" data-action="tab" data-tab="home" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
             <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
             <button type="button" class="mc-home-button" data-action="tab" data-tab="home" aria-label="返回手机首页"><span></span></button>
@@ -23,7 +23,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(event.target.name==='apiMode'){this.capture();this.apiVisibility();}if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
             if (!this.open) return;
@@ -88,9 +88,18 @@ export class Interface {
     apiValues() {
         const v=this.values();const api={};for(const key of Object.keys(normalizeApi()))api[key]=v['api'+key[0].toUpperCase()+key.slice(1)];return normalizeApi(api);
     }
+    applyApiDefaults() {
+        const api=apiDefaults(this.apiValues());
+        for(const [key,value] of Object.entries(api)) {const input=this.content.querySelector(`[name="api${key[0].toUpperCase()+key.slice(1)}"]`);if(input)input.value=value;}
+        this.capture();this.apiVisibility();
+    }
     apiVisibility() {
         const mode=this.content.querySelector('[name="apiMode"]')?.value;
         const fields=this.content.querySelector('[data-mc-api-fields]');if(fields)fields.hidden=mode!=='independent';
+        const claude=this.content.querySelector('[name="apiProvider"]')?.value==='claude';
+        for(const el of this.content.querySelectorAll('[data-mc-provider]'))el.hidden=el.dataset.mcProvider!==(claude?'claude':'openai');
+        for(const [key] of API_PARAMETERS.slice(3)) {const input=this.content.querySelector(`[name="api${key[0].toUpperCase()+key.slice(1)}"]`);if(input){input.closest('label').hidden=claude;input.disabled=claude;}}
+        const temperature=this.content.querySelector('[name="apiTemperature"]');if(temperature)temperature.max=claude?'1':'2';
     }
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     render(state, busy = false, session = null) {
@@ -151,16 +160,18 @@ export class Interface {
           <label class="mc-field"><span>生成方式</span><select name="apiMode"><option value="host" ${api.mode==='host'?'selected':''}>沿用酒馆当前配置</option><option value="independent" ${api.mode==='independent'?'selected':''}>独立 API</option></select></label>
           <p class="mc-muted">提取人物、聊天、批注、陪伴和总结都使用这里选择的 API。酒馆模式沿用宿主的模型和采样参数。</p>
           <div data-mc-api-fields ${api.mode==='host'?'hidden':''}>
-          <p class="mc-muted">支持 OpenAI 兼容接口。地址可填到 /v1，也可填完整 /chat/completions。可选参数留空时不发送，由接口决定默认值。</p>
+          <label class="mc-field"><span>API 来源</span><select name="apiProvider"><option value="openai" ${api.provider==='openai'?'selected':''}>OpenAI 兼容</option><option value="claude" ${api.provider==='claude'?'selected':''}>Claude</option></select></label>
+          <p class="mc-muted" data-mc-provider="openai">使用 /chat/completions 协议；Claude 模型若由平台提供 OpenAI 兼容接口，也选此来源。地址可填到 /v1 或完整端点。</p>
+          <p class="mc-muted" data-mc-provider="claude">使用 Claude 原生 /messages 协议。地址例如 https://api.anthropic.com/v1，也可填完整端点。输出上限为必填项；新版 Claude 建议采样参数留空。</p>
           <label class="mc-field"><span>API 地址</span><input name="apiBaseUrl" type="url" value="${esc(api.baseUrl)}" placeholder="https://example.com/v1" autocomplete="off" spellcheck="false"></label>
           <label class="mc-field"><span>API Key（无鉴权接口可留空）</span><input name="apiApiKey" type="password" value="${esc(api.apiKey)}" autocomplete="off" spellcheck="false"></label>
           <label class="mc-field"><span>模型 ID</span><input name="apiModel" value="${esc(api.model)}" list="mc-api-models" placeholder="读取模型列表或手动填写" autocomplete="off" spellcheck="false"><datalist id="mc-api-models">${this.models.map(model=>`<option value="${esc(model)}"></option>`).join('')}</datalist></label>
           <label class="mc-field"><span>连接方式</span><select name="apiTransport"><option value="host" ${api.transport==='host'?'selected':''}>酒馆转发</option><option value="direct" ${api.transport==='direct'?'selected':''}>浏览器直连</option></select></label>
           <div class="mc-toolbar"><button type="button" data-action="api-models" ${disabled}>读取模型列表</button><button type="button" data-action="api-test" ${disabled}>测试连接</button></div>
-          <details><summary>采样参数（全部可留空）</summary><div class="mc-two">${API_PARAMETERS.map(([key,,label,min,max,integer])=>optionalInput(label,'api'+key[0].toUpperCase()+key.slice(1),api[key],min,max,integer?'1':'any')).join('')}
+          <details><summary>采样与输出参数</summary><button type="button" data-action="api-defaults" ${disabled}>填入通用预设</button><p class="mc-muted">输出上限 4096、超时 120 秒；OpenAI 温度 1，Claude 采样项留空。其他项不发送。预设会替换本页参数，点击保存后生效。</p><div class="mc-two">${API_PARAMETERS.map(([key,,label,min,max,integer])=>optionalInput(label,'api'+key[0].toUpperCase()+key.slice(1),api[key],min,max,integer?'1':'any')).join('')}
           ${optionalInput('输出上限（tokens）','apiMaxTokens',api.maxTokens,1,1000000,'1')}</div>
-          <label class="mc-field"><span>输出上限参数名</span><select name="apiMaxTokenField"><option value="max_tokens" ${api.maxTokenField==='max_tokens'?'selected':''}>max_tokens</option><option value="max_completion_tokens" ${api.maxTokenField==='max_completion_tokens'?'selected':''}>max_completion_tokens</option></select></label>
-          <p class="mc-muted">输出上限留空时两种参数都不发送；填了才使用所选参数名。</p></details>
+          <label class="mc-field" data-mc-provider="openai"><span>输出上限参数名</span><select name="apiMaxTokenField"><option value="max_tokens" ${api.maxTokenField==='max_tokens'?'selected':''}>max_tokens</option><option value="max_completion_tokens" ${api.maxTokenField==='max_completion_tokens'?'selected':''}>max_completion_tokens</option></select></label>
+          <p class="mc-muted" data-mc-provider="openai">可选项留空不发送。推理模型可能要求 max_completion_tokens，或仅接受默认温度。</p><p class="mc-muted" data-mc-provider="claude">输出上限使用 max_tokens，不能留空；其他项留空不发送。频率惩罚、存在惩罚、重复惩罚和随机种子不适用于 Claude。</p></details>
           <details><summary>其他配置（可选）</summary>${optionalInput('上下文检查上限（估算 tokens，留空不检查）','apiContextLimit',api.contextLimit,1,10000000,'1')}${optionalInput('请求超时（秒，留空为 120 秒）','apiTimeout',api.timeout,1,3600,'1')}${field('自定义请求参数（JSON 对象，可选）','apiExtraBody',api.extraBody,4)}<p class="mc-muted">API Key 仅保存在当前设备，导出的聊天备份不包含密钥。</p></details></div>
           <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button><hr>
           <form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>

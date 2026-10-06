@@ -214,6 +214,7 @@ class Companion {
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
             if(/^(moment-|diary-|social-|save-(moment|diary)-settings$)/.test(name) && await this.social.handle(name,args))return;
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
+            if(name==='api-defaults') {this.ui.applyApiDefaults();this.ui.notice('已填入通用预设，请保存 API 配置后使用。');return;}
             if(name==='save-api') {
                 const value=this.ui.apiValues();const api=value.mode==='independent'?validateApi(value).api:normalizeApi(value);
                 this.state.settings.api=api;this.ui.resetDraft();await this.save();this.render();this.ui.notice(api.mode==='host'?'已沿用酒馆当前 API 配置。':'独立 API 配置已保存，可测试连接。');this.queueAutoExtract(true);return;

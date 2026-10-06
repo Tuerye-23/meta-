@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeApi, validateApi, apiBaseUrl } from '../api-config.js';
-import { independentBody, createIndependentClient } from '../api.js';
+import { apiDefaults, normalizeApi, validateApi, apiBaseUrl } from '../api-config.js';
+import { independentBody, createIndependentClient, responseText } from '../api.js';
 import { createHost } from '../host.js';
 import { freshState, validateBackup } from '../core.js';
 const config={mode:'independent',transport:'direct',baseUrl:'https://example.test/v1',apiKey:'test-secret',model:'test-model'};
@@ -48,4 +48,39 @@ test('API errors are visible but redact keys, and empty or reasoning-only replie
 });
 test('API config persists blank values and migrates existing installations to host mode',()=>{
  const state=freshState();state.settings.api=normalizeApi({...config,temperature:0,topP:'',maxTokens:''});const restored=validateBackup(JSON.parse(JSON.stringify(state)));assert.equal(restored.settings.api.temperature,'0');assert.equal(restored.settings.api.topP,'');assert.equal(restored.settings.api.apiKey,'test-secret');delete state.settings.api;assert.equal(validateBackup(state).settings.api.mode,'host');
+});
+test('presets preserve connection fields and do not modify existing configurations',()=>{
+ const old={...config,temperature:'',maxTokens:''};assert.equal(normalizeApi(old).maxTokens,'');
+ const preset=apiDefaults({...old,model:'gpt-5-mini',topP:'0.9',extraBody:'{"x":1}'});
+ assert.equal(preset.baseUrl,config.baseUrl);assert.equal(preset.apiKey,config.apiKey);assert.equal(preset.temperature,'1');assert.equal(preset.maxTokens,'4096');assert.equal(preset.maxTokenField,'max_completion_tokens');assert.equal(preset.topP,'');assert.equal(preset.extraBody,'');
+ const claude=apiDefaults({...old,provider:'claude'});assert.equal(claude.temperature,'');assert.equal(claude.timeout,'120');
+});
+test('Claude builds native system and messages, requires output limit and omits OpenAI parameters',()=>{
+ const c={...config,provider:'claude',maxTokens:'4096',maxTokenField:'max_completion_tokens',frequencyPenalty:'bad',seed:'123'};
+ const {body}=independentBody({...prompt,prompt:[{role:'system',content:'second system'},...prompt.prompt]},c);
+ assert.equal(body.max_tokens,4096);assert.equal(body.messages[0].role,'user');assert.match(body.system,/second system/);assert.equal('seed' in body,false);assert.equal('frequency_penalty' in body,false);assert.equal('max_completion_tokens' in body,false);
+ assert.throws(()=>independentBody(prompt,{...c,maxTokens:''}),/必须填写输出上限/);assert.throws(()=>independentBody(prompt,{...c,temperature:'1.1'}),/温度/);assert.throws(()=>validateApi({...c,extraBody:'{"seed":1}'}),/Claude 不支持/);
+ assert.equal(apiBaseUrl('https://api.anthropic.com/v1/messages/'),'https://api.anthropic.com/v1');assert.equal(apiBaseUrl('https://api.anthropic.com'),'https://api.anthropic.com/v1');
+ assert.equal(apiBaseUrl('https://example.test/messages'),'https://example.test');assert.equal(apiBaseUrl('https://example.test'),'https://example.test');
+});
+test('Claude direct requests use Messages authentication and parse only text blocks',async()=>{
+ const {root,calls}=fixture();root.fetch=async(url,opts)=>{calls.push({url,opts,body:JSON.parse(opts.body)});return reply({content:[{type:'thinking',thinking:'hidden'},{type:'text',text:'Claude '},{type:'text',text:'answer'}]});};
+ assert.equal(await createHost(root).generate(prompt,{...config,provider:'claude',maxTokens:'4096'}),'Claude answer');
+ assert.equal(calls[0].url,'https://example.test/v1/messages');assert.equal(calls[0].opts.headers['x-api-key'],config.apiKey);assert.equal(calls[0].opts.headers['anthropic-version'],'2023-06-01');assert.equal(calls[0].opts.headers.Authorization,undefined);assert.equal(calls[0].body.messages[0].role,'user');
+ assert.throws(()=>responseText({content:[{type:'thinking',thinking:'hidden'}]}),/没有返回有效正文/);
+});
+test('TT Claude forwarding selects native format and exact upstream body without shared credentials',async()=>{
+ const {root,calls}=fixture();root.__TAURITAVERN__={};const c={...config,provider:'claude',transport:'host',maxTokens:'4096',extraBody:'{"thinking":{"type":"disabled"}}'};
+ await createHost(root).generate(prompt,c);const body=calls[0].body;assert.equal(body.chat_completion_source,'custom');assert.equal(body.custom_api_format,'claude_messages');assert.equal(body.custom_url,'');assert.equal(body.proxy_password,config.apiKey);assert.equal(body.use_sysprompt,true);
+ const upstream=JSON.parse(body.custom_include_body);assert.equal(upstream.messages[0].role,'user');assert.match(upstream.system,/system/);assert.deepEqual(upstream.thinking,{type:'disabled'});assert.ok(JSON.parse(body.custom_exclude_body).includes('temperature'));
+ root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return reply({data:[{id:'claude-test'}]});};assert.deepEqual(await createHost(root).models({...c,model:'',maxTokens:''}),['claude-test']);assert.equal(calls.at(-1).body.custom_api_format,'claude_messages');
+});
+test('ST Claude uses its Claude route for generation and explicit headers for models',async()=>{
+ const {root,calls}=fixture();const c={...config,provider:'claude',transport:'host',maxTokens:'4096'};
+ await createHost(root).generate(prompt,c);assert.equal(calls[0].body.chat_completion_source,'claude');assert.equal(calls[0].body.reverse_proxy,config.baseUrl);assert.equal(calls[0].body.messages[0].role,'system');
+ await assert.rejects(()=>createHost(root).generate(prompt,{...c,extraBody:'{"thinking":{"type":"disabled"}}'}),/自定义 JSON/);
+ root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return reply({data:[{id:'claude-test'}]});};await createHost(root).models(c);const headers=JSON.parse(calls.at(-1).body.custom_include_headers);assert.equal(headers['x-api-key'],config.apiKey);assert.equal(headers.Authorization,'');
+});
+test('content filter reasons are distinct from malformed responses',()=>{
+ assert.throws(()=>responseText({promptFeedback:{blockReason:'PROHIBITED_CONTENT'}}),/模型服务拦截/);assert.throws(()=>responseText({choices:[{finish_reason:'content_filter',message:{content:''}}]}),/模型服务拦截/);
 });
