@@ -36,9 +36,9 @@ test('enabled regex selection extracts assistant prose, keeps user input and exc
 test('without BaiBai the extension reads recent raw dialogue, strips reasoning, and does not mutate main chat',async()=>{
     const{c,root}=fixture();c.chat[7].mes='<think>secret</think>正文7';const before=JSON.stringify(c.chat);const r=await createHost(root).story({...freshState().settings,recentFloors:2});assert.equal(r.floors.length,2);assert.doesNotMatch(r.text,/secret/);assert.match(r.text,/正文7/);assert.equal(JSON.stringify(c.chat),before);
 });
-test('token budget rejects excessive prompt before making a model call',async()=>{
+test('host mode delegates token limits to the host instead of blocking on its displayed context setting',async()=>{
     const{c,root}=fixture();let calls=0;c.generateRaw=async()=>{calls++;return'hi';};c.maxContext=1000;c.getTokenCountAsync=async()=>950;
-    await assert.rejects(()=>createHost(root).generate({systemPrompt:'a',prompt:[{role:'user',content:'hello'}],responseLength:128}),/超过/);assert.equal(calls,0);
+    assert.equal(await createHost(root).generate({systemPrompt:'a',prompt:[{role:'user',content:'hello'}],responseLength:128}),'hi');assert.equal(calls,1);
 });
 test('raw generation receives literal macros and cannot execute source variable commands',async()=>{
     const{c,root}=fixture();let sent;c.generateRaw=async r=>{sent=r;return'hi';};
@@ -61,4 +61,10 @@ test('group chat automatically reads all member cards and their bound worlds',as
 });
 test('switching chat while reading automatic sources rejects the stale result',async()=>{
     const {c,root}=fixture();c.worldInfo={};c.characters[0].data.extensions={world:'主世界'};c.loadWorldInfo=async()=>{c.chatId='另一段聊天';return{entries:{0:{content:'世界设定'}}};};await assert.rejects(()=>createHost(root).currentSources(),/切换/);
+});
+
+test('QR persistence waits for successful backend save and rejects HTTP failures for retry',async()=>{
+    const {root,c}=fixture();const calls=[];c.getRequestHeaders=()=>({'Content-Type':'application/json'});let refreshed=0;const set={toJSON:()=>({version:2,name:'映间小手机',qrList:[{label:'映间',message:'/meta'}]}),rerender:()=>refreshed++};
+    root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return new Response('',{status:503});};await assert.rejects(()=>createHost(root).saveQRSet(set),/保存失败/);assert.equal(refreshed,0);
+    root.fetch=async()=>new Response('',{status:200});await createHost(root).saveQRSet(set);assert.equal(refreshed,1);assert.equal(calls[0].url,'/api/quick-replies/save');assert.equal(calls[0].body.qrList[0].message,'/meta');
 });

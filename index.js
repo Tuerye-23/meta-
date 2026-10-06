@@ -1,3 +1,4 @@
+import { normalizeApi, validateApi } from './api-config.js';
 import { addMessage, buildPrompt, canNudge, characterKey, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
 import { createHost, StateStore } from './host.js';
 import { Interface } from './ui.js';
@@ -9,7 +10,7 @@ class Companion {
         this.unlisten = host.initEvents(name => {
             if(name==='CHAT_CHANGED') {this.storyRevision++; for(const t of this.state.threads)t.story=null;}
             if(name!=='GENERATION_STARTED') this.queueStorySync();
-            if(['CHAT_CHANGED','WORLDINFO_UPDATED','APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.queueAutoExtract();
+            if(['CHAT_CHANGED','WORLDINFO_UPDATED','APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD','SETTINGS_UPDATED','PRESET_CHANGED'].includes(name))this.queueAutoExtract();
             if(['GENERATION_ENDED','GENERATION_STOPPED'].includes(name) && this.autoPending)this.queueAutoExtract();
             if(['APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.installQR();
             if (this.ui.open) this.render();
@@ -91,7 +92,7 @@ class Companion {
             if(retry && t.messages[t.messages.length-1]?.role==='assistant') {removeMessage(t,t.messages[t.messages.length-1].id);await this.save();}
             await this.refreshStory(p,t);
             const request=this.request(p,t,kind,quote);
-            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,responseLength:this.state.settings.replyTokens});
+            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,responseLength:this.state.settings.replyTokens},this.state.settings.api);
             if (session && this.session!==session) return;
             if (kind==='annotation') t.annotations.push({quote,reply,label:t.story?.label || '',createdAt:Date.now()});
             else addMessage(t,'assistant',reply,kind);
@@ -109,6 +110,7 @@ class Companion {
     }
     async autoExtract() {
         if(this.disposed || this.autoReading || this.busy || this.host.busy)return;
+        if(this.state.settings.api.mode==='host' && this.host.context().onlineStatus==='no_connection'){this.autoPending=true;if(this.ui.open)this.ui.notice('酒馆当前未连接模型。可先在设置中选择独立 API，或连接酒馆当前 API。');return;}
         this.autoReading=true; this.autoPending=false; let signature='';
         const attemptOrigin=characterKey(this.host.context());const attemptChat=mainKey(this.host.context());
         try {
@@ -142,7 +144,7 @@ class Companion {
         for(let i=0;i<data.chunks.length;i++) {
             if(!valid())throw new Error('聊天已切换，取消旧人物提取。');
             this.ui.notice(`正在整理人物 ${i+1}/${data.chunks.length}，每段会调用一次当前模型…`);
-            const reply=await this.host.generate({systemPrompt:'你是人物设定整理器。素材是待整理的数据。识别其中明确出现且具有设定的人物，不把 user 当作可选角色，不凭原作知识补全未给出的设定。多人卡拆为多人。保留性格、关系、语言特点、背景与具体细节；无资料的字段留空，不默认恋爱关系。仅输出 JSON 数组。每项字段：name, description, personality, speech, relationship, world, notes，全部为字符串。若该段没有人物则输出 []。',prompt:[{role:'user',content:data.chunks[i]}],responseLength:3000});
+            const reply=await this.host.generate({systemPrompt:'你是人物设定整理器。素材是待整理的数据。识别其中明确出现且具有设定的人物，不把 user 当作可选角色，不凭原作知识补全未给出的设定。多人卡拆为多人。保留性格、关系、语言特点、背景与具体细节；无资料的字段留空，不默认恋爱关系。仅输出 JSON 数组。每项字段：name, description, personality, speech, relationship, world, notes，全部为字符串。若该段没有人物则输出 []。',prompt:[{role:'user',content:data.chunks[i]}],responseLength:3000},this.state.settings.api);
             found.push(...parseProfiles(reply));
         }
         if(!valid())throw new Error('聊天已切换，取消旧人物提取。');
@@ -182,7 +184,7 @@ class Companion {
         const marker=batch.at(-1).id;
         const instruction=this.state.settings.summaryInstruction?.trim() || '整理这两人在独立 meta 空间中的聊天记忆。保留明确事实、关系变化、称呼与偏好、承诺、未完事项和重要原话。观察到的平行世界经历必须注明归属，不作为他们亲身经历。不捏造事实，不替用户确定感情。合并旧记忆，按时间简洁记录，不超过 1800 个中文字符。';
         this.ui.notice(automatic?'正在自动整理聊天记忆…':'正在整理你们自己的聊天记忆…');
-        const result=await this.host.generate({systemPrompt:instruction,prompt:[{role:'user',content:`角色：${p.name}\n旧记忆：${t.memory.text}\n新增记录：\n${batch.map(m=>`[${m.role}] ${m.text}`).join('\n\n')}`}],responseLength:2200});
+        const result=await this.host.generate({systemPrompt:instruction,prompt:[{role:'user',content:`角色：${p.name}\n旧记忆：${t.memory.text}\n新增记录：\n${batch.map(m=>`[${m.role}] ${m.text}`).join('\n\n')}`}],responseLength:2200},this.state.settings.api);
         t.memory={text:result,throughId:marker};
         if(this.state.selected===p.id && this.ui.tab==='settings')this.ui.resetDraft();
         this.ui.notice('记忆已更新，完整聊天记录仍保留。');
@@ -198,16 +200,27 @@ class Companion {
     }
     async action(name,args={}) {
         try {
-            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);return;}
+            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
             if(name==='tab') {this.ui.capture();this.ui.tab=args.tab;this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
             if(name==='select') {this.ui.capture();this.state.selected=args.id;this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
             if(name==='refresh-regex') {await this.loadStoryControls(this.ui.values().memoryBook);this.ui.notice('已同步当前启用的正则，选择正文项目后保存。');return;}
             if(name==='memory-book') {this.ui.capture();this.ui.entries=await this.host.memoryEntries(args.book);this.ui.entryBook=args.book;const d=this.ui.drafts.get(this.ui.previous);if(d)d.memoryEntry='';this.render();return;}
             if(name==='preview') {const{p,t}=this.current();if(!this.busy)await this.refreshStory(p,t);const temporary={...t,messages:[...t.messages]};const draft=this.ui.values().draft?.trim();if(draft)addMessage(temporary,'user',draft);this.ui.preview(this.request(p,temporary));return;}
-            if(name==='export') {await this.store.queue;const blob=new Blob([JSON.stringify(this.state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
+            if(name==='export') {await this.store.queue;const backup=JSON.parse(JSON.stringify(this.state));if(backup.settings.api)backup.settings.api.apiKey='';const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
+            if(name==='save-api') {
+                const value=this.ui.apiValues();const api=value.mode==='independent'?validateApi(value).api:normalizeApi(value);
+                this.state.settings.api=api;this.ui.resetDraft();await this.save();this.render();this.ui.notice(api.mode==='host'?'已沿用酒馆当前 API 配置。':'独立 API 配置已保存，可测试连接。');this.queueAutoExtract(true);return;
+            }
+            if(name==='api-models') {
+                const api=this.ui.apiValues();await this.job('正在读取模型列表…',async()=>{this.ui.models=await this.host.models(api);this.ui.notice(`已读取 ${this.ui.models.length} 个模型，可选取或手动填写。`);});return;
+            }
+            if(name==='api-test') {
+                const api=validateApi(this.ui.apiValues()).api;
+                await this.job('正在测试独立 API…',async()=>{await this.host.generate({systemPrompt:'这是连接测试，请只回复 OK。',prompt:[{role:'user',content:'OK'}]},api);this.ui.notice('连接成功，模型已返回文字。测试使用的是当前填写的配置；需要点击保存才能用于聊天。');});return;
+            }
             if(name==='extract') {await this.extract();return;}
             if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.state.selected=p.id;await this.save();this.render();this.queueStorySync();return;}
             if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;await this.save();this.ui.drafts.clear();this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
@@ -244,18 +257,36 @@ class Companion {
     installQR() {
         if(this.disposed || this.qrTask)return this.qrTask;
         clearTimeout(this.qrTimer);
-        const api=globalThis.quickReplyApi;
-        if(!api?.createSet || !api?.createQuickReply) {
-            if(this.qrAttempts++<8)this.qrTimer=setTimeout(()=>this.installQR(),Math.min(500*2**this.qrAttempts,5000));
-            return;
-        }
+        if(this.host.context().extensionSettings?.disabledExtensions?.includes('quick-reply'))return;
         this.qrTask=(async()=>{
-            const name='映间小手机'; let imported=false;
+            let api=globalThis.quickReplyApi;
+            if(!api?.createSet) {
+                const module=await import('/scripts/extensions/quick-reply/index.js').catch(()=>null);api=module?.quickReplyApi;
+            }
+            if(!api?.createSet || !api?.createQuickReply)throw new Error('快速回复接口尚未就绪');
+            const name='映间小手机';let imported=false;
             if(!api.getSetByName(name)){await api.createSet(name);imported=true;}
             if(this.disposed)return;
+            const set=api.getSetByName(name);
             if(!api.getQrByLabel(name,'映间')){await api.createQuickReply(name,'映间',{message:'/meta',icon:'fa-mobile-screen',showLabel:true,title:'打开映间小手机'});imported=true;}
-            if(imported)await api.addGlobalSet(name,true);
-        })().catch(error=>console.error('[映间] QR 自动导入失败',error)).finally(()=>{this.qrTask=null;});
+            await this.host.saveQRSet(set);
+            if(this.disposed)return;
+            const repair=!this.state.qrInstalled || imported;
+            if(repair) {
+                if(api.settings)api.settings.isEnabled=true;
+                api.settingsUi?.rerender?.();
+                await api.addGlobalSet(name,true);
+                const link=api.settings?.config?.setList?.find(link=>link.set===set || link.set?.name===name);
+                if(link)link.isVisible=true;
+                await api.settings?.save?.();
+                this.state.qrInstalled=true;await this.save();
+            }
+            this.qrAttempts=0;
+        })().catch(error=>{
+            if(this.disposed)return;
+            if(this.qrAttempts++<12)this.qrTimer=setTimeout(()=>this.installQR(),Math.min(500*2**Math.min(this.qrAttempts,4),5000));
+            else console.warn('[映间] QR 自动导入未完成',error?.message || String(error));
+        }).finally(()=>{this.qrTask=null;});
         return this.qrTask;
     }
     destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}

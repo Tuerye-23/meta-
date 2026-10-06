@@ -1,3 +1,4 @@
+import { createIndependentClient } from './api.js';
 import { characterKey, chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
 
 export function createHost(root = globalThis) {
@@ -6,6 +7,7 @@ export function createHost(root = globalThis) {
         if (!ctx) throw new Error('尚未取得酒馆接口，请等待酒馆加载完成。');
         return ctx;
     };
+    const independent=createIndependentClient(root,context);
     let hostBusy = false;
     const listeners = [];
     let regexModule;
@@ -29,18 +31,24 @@ export function createHost(root = globalThis) {
             }
             return () => listeners.splice(0).forEach(fn => fn());
         },
-        async generate(request) {
-            const c = context();
-            if (this.busy) throw new Error('主线正在生成，请等这一轮结束。');
-            if (typeof c.generateRaw !== 'function') throw new Error('当前酒馆没有 generateRaw 接口。');
-            if (typeof c.getTokenCountAsync === 'function' && c.maxContext > 0) {
-                const body = request.systemPrompt + '\n' + request.prompt.map(m => m.content).join('\n');
-                const count = await c.getTokenCountAsync(body);
-                if (count + (request.responseLength || 800) + 512 > c.maxContext) throw new Error(`本次上下文约 ${count} tokens，超过当前模型预算。请减少剧情长度、整理聊天记忆或调大上下文。`);
-            }
-            const result = await c.generateRaw({ ...request, systemPrompt: literalMacros(request.systemPrompt), prompt: request.prompt.map(m => ({ ...m, content: literalMacros(m.content) })), trimNames: false });
-            if (typeof result !== 'string' || !result.trim()) throw new Error('模型没有返回有效文字。');
+        async generate(request,api={mode:'host'}) {
+            if(api.mode==='independent')return independent.generate(request,api);
+            const c=context();
+            if(this.busy)throw new Error('主线正在生成，请等这一轮结束。');
+            if(typeof c.generateRaw!=='function')throw new Error('当前酒馆没有 generateRaw 接口。');
+            const result=await c.generateRaw({...request,systemPrompt:literalMacros(request.systemPrompt),prompt:request.prompt.map(m=>({...m,content:literalMacros(m.content)})),trimNames:false});
+            if(typeof result!=='string' || !result.trim())throw new Error('模型没有返回有效文字。');
             return result.trim();
+        },
+        models(api) {return independent.models(api);},
+        async saveQRSet(set) {
+            const c=context();
+            if(typeof set?.toJSON==='function' && typeof c.getRequestHeaders==='function' && typeof root.fetch==='function') {
+                // QR's native save method logs HTTP errors but does not reject them.
+                const response=await root.fetch('/api/quick-replies/save',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(set)});
+                if(!response.ok)throw new Error(`QR 按钮保存失败（${response.status}），稍后重试。`);
+                set.rerender?.();
+            } else if(typeof set?.save==='function')await set.save();
         },
         async currentSources() {
             const ctx=context(); const originKey=characterKey(ctx); const sourceKey=mainKey(ctx);

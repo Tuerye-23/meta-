@@ -1,4 +1,5 @@
-export const VERSION = '0.2.1';
+import { normalizeApi } from './api-config.js';
+export const VERSION = '0.3.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -9,6 +10,7 @@ export function freshState() {
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
+        api:normalizeApi(),
         autoSummary: false, summaryEvery: 40, summaryKeep: 12, summaryInstruction: '',
     } };
 }
@@ -56,6 +58,7 @@ export function validateBackup(input) {
         });
     }
     for (const p of out.profiles) if (!out.threads.some(t => t.profileId === p.id)) out.threads.push(newThread(p.id));
+    out.qrInstalled=input.qrInstalled===true;
     out.selected = ids.has(input.selected) ? input.selected : out.profiles[0]?.id || '';
     if(input.extractions && typeof input.extractions==='object') for(const [key,value] of Object.entries(input.extractions).slice(0,200)) {
         if(!value || typeof value.fingerprint!=='string' || !Array.isArray(value.profileIds))continue;
@@ -63,7 +66,7 @@ export function validateBackup(input) {
         if(profileIds.length)Object.defineProperty(out.extractions,key,{value:{fingerprint:value.fingerprint,profileIds},enumerable:true,writable:true,configurable:true});
     }
     const s = input.settings || {};
-    out.settings = { includeStory: s.includeStory !== false,
+    out.settings = { api:normalizeApi(s.api),includeStory: s.includeStory !== false,
         recentFloors: clamp(s.recentFloors, 1, 60, 12), storyLimit: clamp(s.storyLimit, 1000, 60000, 12000),
         replyTokens: clamp(s.replyTokens, 128, 4096, 800), historyMessages: clamp(s.historyMessages, 4, 200, 40),
         intervalMinutes: clamp(s.intervalMinutes, 2, 120, 10), maxProactive: clamp(s.maxProactive, 1, 20, 3),

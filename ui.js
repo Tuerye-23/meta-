@@ -1,3 +1,4 @@
+import { API_PARAMETERS, normalizeApi } from './api-config.js';
 import { VERSION } from './core.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -6,7 +7,7 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.host = host; this.action = action; this.tab = 'chat'; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;
+        this.host = host; this.action = action; this.tab = 'chat'; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
@@ -21,7 +22,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(event.target.name==='apiMode'){this.capture();this.apiVisibility();}if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
             if (!this.open) return;
@@ -83,6 +84,13 @@ export class Interface {
     }
     clearDraft(name) { const key = this.previous; const d = this.drafts.get(key) || {}; d[name] = ''; this.drafts.set(key,d); const n=this.content.querySelector(`[name="${name}"]`); if(n)n.value=''; }
     resetDraft() { this.drafts.delete(this.previous); this.previous = ''; }
+    apiValues() {
+        const v=this.values();const api={};for(const key of Object.keys(normalizeApi()))api[key]=v['api'+key[0].toUpperCase()+key.slice(1)];return normalizeApi(api);
+    }
+    apiVisibility() {
+        const mode=this.content.querySelector('[name="apiMode"]')?.value;
+        const fields=this.content.querySelector('[data-mc-api-fields]');if(fields)fields.hidden=mode!=='independent';
+    }
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     render(state, busy = false, session = null) {
         this.capture(); this.snapshotView();
@@ -94,7 +102,7 @@ export class Interface {
         this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
         const c = this.host.context(); const s = state.settings;
-        const disabled = busy ? 'disabled' : '';
+        const disabled = busy ? 'disabled' : '';const api=normalizeApi(s.api);
         if (this.tab === 'chat') markup = p ? `
             <div class="mc-chat-meta"><span>${s.includeStory ? '主线自动同步 · '+esc(t?.story?.label || '等待正文') : '独立 Meta 对话'}</span><button type="button" data-action="preview" aria-label="查看本次发送内容">发送预览</button></div>
             <div class="mc-messages" aria-live="polite">${(t?.messages || []).slice(-200).map(m => `<article class="mc-message mc-${m.role}"><header><strong>${esc(m.role === 'user' ? p.userName || '你' : m.role === 'note' ? '记录' : p.name)}</strong><small>${esc(m.kind === 'proactive' ? '主动消息' : m.kind === 'theatre' ? '小剧场' : '')} ${new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><button type="button" data-action="delete-message" data-id="${esc(m.id)}" aria-label="删除这条消息">×</button></header><div>${esc(m.text)}</div></article>`).join('') || `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>和 ${esc(p.name)} 聊几句</strong><p>可以一起看故事，也可以从今天过得怎么样聊起。<br>关系沿用角色设定。</p></div>`}</div>
@@ -131,8 +139,24 @@ export class Interface {
           <div class="mc-toolbar"><button type="button" class="mc-primary" data-action="start-company" ${!p||busy?'disabled':''}>${session?'重新开始':'开始陪伴'}</button><button type="button" data-action="stop-company" ${session?'':'disabled'}>结束陪伴</button><button type="button" data-action="nudge" ${!p||busy?'disabled':''}>让他现在说一句</button></div>
           <p class="mc-muted">主动搭话仅在映间打开且应用在前台时运行。计时无需调用模型，生成消息会使用当前 API；关闭面板时暂停，重新打开后继续计时。重启后需重新开始陪伴。</p>
           <hr><h3>开一段小剧场</h3>${field('给你们一个场景','scene','',3)}<button type="button" data-action="theatre" ${!p||busy?'disabled':''}>一起演一小段</button></div>`;
-        if (this.tab === 'settings') markup = `<div class="mc-scroll"><form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
-          <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('剧情发送上限（字符）','storyLimit',s.storyLimit,1000,60000)}${number('单次回复上限（tokens）','replyTokens',s.replyTokens,128,4096)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
+        if (this.tab === 'settings') markup = `<div class="mc-scroll"><h3>API 配置</h3>
+          <label class="mc-field"><span>生成方式</span><select name="apiMode"><option value="host" ${api.mode==='host'?'selected':''}>沿用酒馆当前配置</option><option value="independent" ${api.mode==='independent'?'selected':''}>独立 API</option></select></label>
+          <p class="mc-muted">提取人物、聊天、批注、陪伴和总结都使用这里选择的 API。酒馆模式沿用宿主的模型和采样参数。</p>
+          <div data-mc-api-fields ${api.mode==='host'?'hidden':''}>
+          <p class="mc-muted">支持 OpenAI 兼容接口。地址可填到 /v1，也可填完整 /chat/completions。可选参数留空时不发送，由接口决定默认值。</p>
+          <label class="mc-field"><span>API 地址</span><input name="apiBaseUrl" type="url" value="${esc(api.baseUrl)}" placeholder="https://example.com/v1" autocomplete="off" spellcheck="false"></label>
+          <label class="mc-field"><span>API Key（无鉴权接口可留空）</span><input name="apiApiKey" type="password" value="${esc(api.apiKey)}" autocomplete="off" spellcheck="false"></label>
+          <label class="mc-field"><span>模型 ID</span><input name="apiModel" value="${esc(api.model)}" list="mc-api-models" placeholder="读取模型列表或手动填写" autocomplete="off" spellcheck="false"><datalist id="mc-api-models">${this.models.map(model=>`<option value="${esc(model)}"></option>`).join('')}</datalist></label>
+          <label class="mc-field"><span>连接方式</span><select name="apiTransport"><option value="host" ${api.transport==='host'?'selected':''}>酒馆转发</option><option value="direct" ${api.transport==='direct'?'selected':''}>浏览器直连</option></select></label>
+          <div class="mc-toolbar"><button type="button" data-action="api-models" ${disabled}>读取模型列表</button><button type="button" data-action="api-test" ${disabled}>测试连接</button></div>
+          <details><summary>采样参数（全部可留空）</summary><div class="mc-two">${API_PARAMETERS.map(([key,,label,min,max,integer])=>optionalInput(label,'api'+key[0].toUpperCase()+key.slice(1),api[key],min,max,integer?'1':'any')).join('')}
+          ${optionalInput('输出上限（tokens）','apiMaxTokens',api.maxTokens,1,1000000,'1')}</div>
+          <label class="mc-field"><span>输出上限参数名</span><select name="apiMaxTokenField"><option value="max_tokens" ${api.maxTokenField==='max_tokens'?'selected':''}>max_tokens</option><option value="max_completion_tokens" ${api.maxTokenField==='max_completion_tokens'?'selected':''}>max_completion_tokens</option></select></label>
+          <p class="mc-muted">输出上限留空时两种参数都不发送；填了才使用所选参数名。</p></details>
+          <details><summary>其他配置（可选）</summary>${optionalInput('上下文检查上限（估算 tokens，留空不检查）','apiContextLimit',api.contextLimit,1,10000000,'1')}${optionalInput('请求超时（秒，留空为 120 秒）','apiTimeout',api.timeout,1,3600,'1')}${field('自定义请求参数（JSON 对象，可选）','apiExtraBody',api.extraBody,4)}<p class="mc-muted">API Key 仅保存在当前设备，导出的聊天备份不包含密钥。</p></details></div>
+          <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button><hr>
+          <form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
+          <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('剧情发送上限（字符）','storyLimit',s.storyLimit,1000,60000)}${number('酒馆模式回复上限（tokens）','replyTokens',s.replyTokens,128,4096)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
           ${field('Meta 回复要求（可选）','customInstruction',s.customInstruction,4)}<button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存设置</button></form><hr>
           <h3>Meta 自动总结</h3><label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div>${field('总结提示词（留空使用内置提示词）','summaryInstruction',s.summaryInstruction,5)}<button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p><hr>
           ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p><hr>` : ''}
@@ -148,6 +172,7 @@ export class Interface {
             else if (n.multiple) for (const o of n.options) o.selected = saved[n.name].includes(o.value);
             else n.value = saved[n.name];
         }
+        this.apiVisibility();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if(i<view.details.length)d.open=view.details[i];
@@ -171,3 +196,5 @@ export class Interface {
 }
 
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}
+
+function optionalInput(label,name,value,min,max,step) {return `<label class="mc-field"><span>${label}</span><input name="${name}" type="number" value="${esc(value)}" min="${min}" max="${max}" step="${step}" placeholder="留空不发送"></label>`;}
