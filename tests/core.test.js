@@ -28,12 +28,12 @@ test('meta and watched memories remain in separate labelled sections; relationsh
     const p=normalizeProfile({name:'Rick',userName:'恒'});const t=newThread(p.id);t.story={text:'他向另一个 user 许诺。'};t.memory={text:'我们约好周六聊天。',throughId:''};
     addMessage(t,'user','你觉得那个你怎么样？');
     const r=buildPrompt(p,t,freshState().settings);
-    assert.match(r.systemPrompt,/原设定关系|关系没有说明时保持未知/);assert.match(r.systemPrompt,/共同观看的平行世界/);assert.match(r.systemPrompt,/我们在 meta 中形成的记忆/);
-    const off=buildPrompt(p,t,{...freshState().settings,includeStory:false});assert.doesNotMatch(off.systemPrompt,/他向另一个/);
+    const material=r.prompt.map(m=>m.content).join('\n');assert.match(material,/资料没有明确的关系不擅自补齐/);assert.match(material,/另一个世界/);assert.match(material,/<Meta聊天记忆>/);
+    const off=buildPrompt(p,t,{...freshState().settings,includeStory:false});assert.doesNotMatch(off.prompt.map(m=>m.content).join('\n'),/他向另一个/);
 });
 test('context excludes already summarized history; activity notes are labelled',()=>{
     const p=normalizeProfile({name:'R'});const t=newThread(p.id);const a=addMessage(t,'user','old');t.memory={text:'old summary',throughId:a.id};addMessage(t,'note','一起写东西');addMessage(t,'assistant','new');
-    const r=buildPrompt(p,t,freshState().settings);assert.deepEqual(r.prompt.map(m=>m.role),['system','assistant']);assert.ok(r.prompt.every(m=>m.content!=='old'));
+    const r=buildPrompt(p,t,freshState().settings);assert.equal(r.prompt.find(m=>m.content==='new').role,'assistant');assert.equal(r.prompt.find(m=>m.content.includes('Meta 活动记录')).role,'system');assert.ok(r.prompt.every(m=>m.content!=='old'));
 });
 test('removing summarized messages invalidates the summary',()=>{
     const t=newThread('p');const old=addMessage(t,'user','old');const recent=addMessage(t,'assistant','recent');t.memory={text:'summary',throughId:old.id};removeMessage(t,recent.id);assert.equal(t.memory.text,'summary');removeMessage(t,old.id);assert.equal(t.memory.text,'');

@@ -1,4 +1,5 @@
 import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
+import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { VERSION } from './core.js';
 import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
 
@@ -8,7 +9,7 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];
+        this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];this.personaEntries=[];this.personaBook='';this.sourceDraft={};
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
@@ -23,7 +24,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='personaMode' || event.target.name==='extractPersona'){this.capture();this.personaVisibility();}if(event.target.name==='personaBook')action('persona-book',{book:event.target.value});if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
             if (!this.open) return;
@@ -70,7 +71,7 @@ export class Interface {
         if(!this.viewKey)return;
         const scroll=this.content.querySelector('.mc-scroll,.mc-messages'); const active=document.activeElement;
         const focused=this.content.contains(active) && active?.name ? {name:active.name,start:active.selectionStart,end:active.selectionEnd,scroll:active.scrollTop} : null;
-        this.views.set(this.viewKey,{scroll:scroll?.scrollTop || 0,bottom:!scroll || scroll.scrollHeight-scroll.clientHeight-scroll.scrollTop<32,details:[...this.content.querySelectorAll('details')].map(d=>d.open),focused});
+        this.views.set(this.viewKey,{scroll:scroll?.scrollTop || 0,bottom:!scroll || scroll.scrollHeight-scroll.clientHeight-scroll.scrollTop<32,details:Object.fromEntries([...this.content.querySelectorAll('details')].map((d,i)=>[d.dataset.view || String(i),d.open])),focused});
     }
     show() { this.lastFocus = document.activeElement; this.open = true; this.root.hidden = false; this.placePhone(); this.root.querySelector('[data-action="close"][aria-label]')?.focus(); }
     hide() { this.capture(); this.snapshotView(); this.open = false; this.root.hidden = true; this.lastFocus?.focus?.(); }
@@ -81,10 +82,15 @@ export class Interface {
         for (const n of this.content.querySelectorAll('input[name],textarea[name],select[name]')) {
             values[n.name] = n.type === 'checkbox' ? n.checked : n.multiple ? [...n.selectedOptions].map(o => o.value) : n.value;
         }
+        if(this.previous.startsWith('roles:'))for(const key of ['cards','personaBook','personaEntries','includeDisabled','extractPersona','targetNames'])if(key in values)this.sourceDraft[key]=values[key];
         this.drafts.set(this.previous, values);
     }
     clearDraft(name) { const key = this.previous; const d = this.drafts.get(key) || {}; d[name] = ''; this.drafts.set(key,d); const n=[...this.content.querySelectorAll("[name]")].find(el=>el.name===name); if(n)n.value=''; }
-    resetDraft() { this.drafts.delete(this.previous); this.previous = ''; }
+    resetDraft(names=null) {
+        if(names){this.capture();const draft=this.drafts.get(this.previous) || {};for(const name of names)delete draft[name];this.drafts.set(this.previous,draft);this.lastMarkup='';}
+        else this.drafts.delete(this.previous);
+        this.previous='';
+    }
     apiValues() {
         const v=this.values();const api={};for(const key of Object.keys(normalizeApi()))api[key]=v['api'+key[0].toUpperCase()+key.slice(1)];return normalizeApi(api);
     }
@@ -101,10 +107,19 @@ export class Interface {
         for(const [key] of API_PARAMETERS.slice(3)) {const input=this.content.querySelector(`[name="api${key[0].toUpperCase()+key.slice(1)}"]`);if(input){input.closest('label').hidden=claude;input.disabled=claude;}}
         const temperature=this.content.querySelector('[name="apiTemperature"]');if(temperature)temperature.max=claude?'1':'2';
     }
+    personaVisibility() {
+        const inherit=this.content.querySelector('[name="personaMode"]')?.value==='inherit';
+        for(const key of ['description','personality','scenario','speech','worldBefore','worldAfter','world']) {
+            const input=this.content.querySelector(`[name="${key}"]`);if(input)input.readOnly=inherit;
+        }
+        const extract=this.content.querySelector('[name="extractPersona"]')?.checked;
+        const button=this.content.querySelector('[data-action="extract"]');if(button)button.textContent=extract?'提取所选人设并建立联系人':'沿用设定并建立联系人';
+        const tip=this.content.querySelector('[data-persona-tip]');if(tip)tip.textContent=extract?'填写要建立的角色姓名，每行一位。共享条目中的其他角色不会被提取。':'角色卡会分别建立联系人。单个世界书条目可沿用条目名称，或填写联系人姓名。';
+    }
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     render(state, busy = false, session = null) {
         this.capture(); this.snapshotView();
-        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary'].includes(this.tab)?'global':state.selected}:${this.tab==='diary'?this.diaryTab:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}`; let markup='';
+        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary','settings'].includes(this.tab)?'global':state.selected}:${this.tab==='diary'?this.diaryTab:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}`; let markup='';
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;
@@ -112,7 +127,7 @@ export class Interface {
         this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
         this.root.querySelector('.mc-panel').dataset.screen=this.tab;
-        this.root.querySelector('.mc-top').hidden=!['chat','roles','story','company','settings'].includes(this.tab);
+        this.root.querySelector('.mc-top').hidden=!['chat','roles','story','company'].includes(this.tab);
         this.root.querySelector('.mc-back').hidden=this.tab==='home';
         this.root.querySelector('#mc-app-title').textContent=this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
         const c = this.host.context(); const s = state.settings;
@@ -126,14 +141,19 @@ export class Interface {
             <form class="mc-compose"><textarea id="mc-draft" name="draft" rows="3" placeholder="想和 ${esc(p.name)} 说什么？" aria-label="消息内容"></textarea><div><small>Ctrl / ⌘ + Enter 发送</small><button type="button" data-action="retry" ${disabled}>重试回复</button><button type="button" class="mc-primary" data-action="send" ${disabled}>发送</button></div></form>` : `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>先认识一个人</strong><p>选择角色卡、世界书，或者手动写一份角色资料。</p><button type="button" class="mc-primary" data-action="tab" data-tab="roles">添加角色</button></div>`;
         if (this.tab === 'roles') {
             const cards = c.characters || []; const books = c.getWorldInfoNames?.() || [];
-            markup = `<div class="mc-scroll"><div class="mc-contact-list">${state.profiles.map(person=>`<div class="mc-contact-row"><span class="mc-avatar">${esc(person.name.slice(0,1))}</span><button type="button" data-action="contact-chat" data-id="${esc(person.id)}"><strong>${esc(person.name)}</strong><small>${esc(state.threads.find(x=>x.profileId===person.id)?.messages.at(-1)?.text?.slice(0,45) || '开始聊天')}</small></button><button type="button" data-action="select" data-id="${esc(person.id)}" aria-label="编辑 ${esc(person.name)} 的资料">⋯</button></div>`).join('')}</div><details class="mc-source-box" ${p ? '' : 'open'}><summary>从角色卡 / 世界书提取</summary><p>可多选。多人卡会整理出多位角色，提取后可以修改。每批素材会分段调用当前模型。</p>
-              <div class="mc-two"><label class="mc-field"><span>角色卡（可多选）</span><select name="cards" multiple size="5">${cards.map((card,i) => `<option value="${i}" ${i===Number(c.characterId)?'selected':''}>${esc(card.name || card.data?.name || '未命名')}</option>`).join('')}</select></label>
-              <label class="mc-field"><span>世界书（可多选）</span><select name="books" multiple size="5">${books.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('')}</select></label></div>
-              <label class="mc-check"><input type="checkbox" name="includeDisabled">包含已关闭的世界书条目</label><button type="button" class="mc-primary" data-action="extract" ${disabled}>提取人物</button></details>
+            markup = `<div class="mc-scroll"><div class="mc-contact-list">${state.profiles.map(person=>`<div class="mc-contact-row"><span class="mc-avatar">${esc(person.name.slice(0,1))}</span><button type="button" data-action="contact-chat" data-id="${esc(person.id)}"><strong>${esc(person.name)}</strong><small>${esc(state.threads.find(x=>x.profileId===person.id)?.messages.at(-1)?.text?.slice(0,45) || '开始聊天')}</small></button><button type="button" data-action="select" data-id="${esc(person.id)}" aria-label="编辑 ${esc(person.name)} 的资料">⋯</button></div>`).join('')}</div><details class="mc-source-box" data-view="persona-source" ${p ? '' : 'open'}><summary>从角色卡 / 世界书建立联系人</summary><p class="mc-muted">直接沿用原始设定。多人共用条目时，开启提取并填写所选姓名；每次提取只调用一次模型。</p>
+              <label class="mc-field"><span>角色卡（可多选；世界书单独使用时清空此项）</span><select name="cards" multiple size="4">${cards.map((card,i) => `<option value="${i}" ${i===Number(c.characterId)?'selected':''}>${esc(card.name || card.data?.name || '未命名')}</option>`).join('')}</select></label><button type="button" data-action="clear-source-cards">清空角色卡选择</button>
+              <label class="mc-field"><span>世界书（不选时沿用角色卡绑定的世界书）</span><select name="personaBook"><option value="">沿用绑定来源</option>${books.map(name=>`<option value="${esc(name)}" ${this.personaBook===name?'selected':''}>${esc(name)}</option>`).join('')}</select></label>
+              <label class="mc-field" data-persona-entries ${this.personaBook?'':'hidden'}><span>所选条目（可多选）</span><select name="personaEntries" multiple size="6">${this.personaEntries.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}${e.disabled?'（已关闭）':''}</option>`).join('')}</select></label>
+              <label class="mc-check"><input type="checkbox" name="includeDisabled">包含所选的已关闭条目</label>
+              <label class="mc-check"><input type="checkbox" name="extractPersona">提取条目中的所选角色人设（支持批量）</label>
+              ${field('联系人姓名 / 所选角色姓名（提取时每行一位）','targetNames','',3)}
+              <p class="mc-muted" data-persona-tip>角色卡会分别建立联系人。单个世界书条目可沿用条目名称，或填写联系人姓名。</p>
+              <button type="button" class="mc-primary" data-action="extract" ${disabled}>沿用设定并建立联系人</button></details>
               <div class="mc-toolbar"><button type="button" data-action="add-profile" ${disabled}>＋ 手动添加</button>${p ? `<button type="button" data-action="delete-profile" ${disabled}>删除当前角色</button>` : ''}</div>
               ${p ? `<form id="mc-profile-form"><div class="mc-two"><label class="mc-field"><span>角色姓名</span><input name="name" value="${esc(p.name)}"></label><label class="mc-field"><span>你的称呼 / user 名称</span><input name="userName" value="${esc(p.userName)}"></label></div>
-              ${field('身份与外貌','description',p.description)}${field('性格','personality',p.personality)}${field('说话习惯 / 示例','speech',p.speech)}${field('原设定里的关系','relationship',p.relationship)}${field('世界设定','world',p.world)}${field('你的设定','userPersona',p.userPersona)}${field('Meta 补充设定','notes',p.notes)}
-              <p class="mc-muted">来源：${esc(p.sources?.join('；') || '手动资料')}</p><button type="button" class="mc-primary" data-action="save-profile" ${disabled}>保存角色资料</button></form>${p.sourceText ? `<details><summary>查看提取素材原文</summary><pre>${esc(p.sourceText)}</pre></details>` : ''}` : ''}</div>`;
+              <label class="mc-field"><span>人设来源</span><select name="personaMode"><option value="inherit" ${p.personaMode==='inherit'?'selected':''} ${p.binding?'':'disabled'}>${p.binding?.avatar?'沿用角色卡人设':'沿用世界书条目'}</option><option value="manual" ${p.personaMode!=='inherit'?'selected':''}>独立人设${p.personaMode==='extracted'?'（已提取）':''}</option></select></label><p class="mc-muted">沿用模式会读取来源更新；切换到独立人设后，可直接修改下面的文本。</p>${field('人设','description',p.description,7)}<details data-view="persona-fields"><summary>性格、背景与补充资料</summary>${field('性格','personality',p.personality)}${field('场景 / 背景','scenario',p.scenario)}${field('世界书前置','worldBefore',p.worldBefore)}${field('世界书后置','worldAfter',p.worldAfter)}${field('说话习惯 / 示例','speech',p.speech)}${field('原设定里的关系','relationship',p.relationship)}${field('世界设定','world',p.world)}${field('你的设定','userPersona',p.userPersona)}${field('Meta 补充设定','notes',p.notes)}</details>
+              <p class="mc-muted">来源：${esc(p.sources?.join('；') || '手动资料')}</p><button type="button" class="mc-primary" data-action="save-profile" ${disabled}>保存角色资料</button></form>${p.sourceText ? `<details><summary>查看设定来源原文</summary><pre>${esc(p.sourceText)}</pre></details>` : ''}` : ''}</div>`;
         }
         if (this.tab === 'story') markup = `<div class="mc-scroll"><div class="mc-section-title"><span>共同观看</span><small>自动跟随最新正文</small></div><p class="mc-muted">${esc(t?.story?.label || '等待当前主线出现正文')}</p>
           <details open><summary>正文读取范围</summary><p>只读所选标签，或排除不想读的内容。正文标签和正则筛选作用于角色回复，用户消息保留。</p>
@@ -156,9 +176,9 @@ export class Interface {
           <div class="mc-toolbar"><button type="button" class="mc-primary" data-action="start-company" ${!p||busy?'disabled':''}>${session?'重新开始':'开始陪伴'}</button><button type="button" data-action="stop-company" ${session?'':'disabled'}>结束陪伴</button><button type="button" data-action="nudge" ${!p||busy?'disabled':''}>让他现在说一句</button></div>
           <p class="mc-muted">主动搭话仅在映间打开且应用在前台时运行。计时无需调用模型，生成消息会使用当前 API；关闭面板时暂停，重新打开后继续计时。重启后需重新开始陪伴。</p>
           <hr><h3>开一段小剧场</h3>${field('给你们一个场景','scene','',3)}<button type="button" data-action="theatre" ${!p||busy?'disabled':''}>一起演一小段</button></div>`;
-        if (this.tab === 'settings') markup = `<div class="mc-scroll"><h3>API 配置</h3>
+        if (this.tab === 'settings') markup = `<div class="mc-scroll mc-settings"><div class="mc-settings-intro"><span>映间 · 偏好设置</span><small>按需展开，慢慢调整</small></div>${settingStart('api','API 配置','连接模型，设定生成方式','api')}
           <label class="mc-field"><span>生成方式</span><select name="apiMode"><option value="host" ${api.mode==='host'?'selected':''}>沿用酒馆当前配置</option><option value="independent" ${api.mode==='independent'?'selected':''}>独立 API</option></select></label>
-          <p class="mc-muted">提取人物、聊天、批注、陪伴和总结都使用这里选择的 API。酒馆模式沿用宿主的模型和采样参数。</p>
+          <p class="mc-muted">人设提取、聊天、批注、陪伴和总结都使用这里选择的 API。酒馆模式沿用宿主的模型和采样参数。</p>
           <div data-mc-api-fields ${api.mode==='host'?'hidden':''}>
           <label class="mc-field"><span>API 来源</span><select name="apiProvider"><option value="openai" ${api.provider==='openai'?'selected':''}>OpenAI 兼容</option><option value="claude" ${api.provider==='claude'?'selected':''}>Claude</option></select></label>
           <p class="mc-muted" data-mc-provider="openai">使用 /chat/completions 协议；Claude 模型若由平台提供 OpenAI 兼容接口，也选此来源。地址可填到 /v1 或完整端点。</p>
@@ -173,13 +193,14 @@ export class Interface {
           <label class="mc-field" data-mc-provider="openai"><span>输出上限参数名</span><select name="apiMaxTokenField"><option value="max_tokens" ${api.maxTokenField==='max_tokens'?'selected':''}>max_tokens</option><option value="max_completion_tokens" ${api.maxTokenField==='max_completion_tokens'?'selected':''}>max_completion_tokens</option></select></label>
           <p class="mc-muted" data-mc-provider="openai">可选项留空不发送。推理模型可能要求 max_completion_tokens，或仅接受默认温度。</p><p class="mc-muted" data-mc-provider="claude">输出上限使用 max_tokens，不能留空；其他项留空不发送。频率惩罚、存在惩罚、重复惩罚和随机种子不适用于 Claude。</p></details>
           <details><summary>其他配置（可选）</summary>${optionalInput('上下文检查上限（估算 tokens，留空不检查）','apiContextLimit',api.contextLimit,1,10000000,'1')}${optionalInput('请求超时（秒，留空为 120 秒）','apiTimeout',api.timeout,1,3600,'1')}${field('自定义请求参数（JSON 对象，可选）','apiExtraBody',api.extraBody,4)}<p class="mc-muted">API Key 仅保存在当前设备，导出的聊天备份不包含密钥。</p></details></div>
-          <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button><hr>
+          <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button>${settingEnd}${settingStart('history','聊天记录设置','正文同步与聊天上下文','chat')}
           <form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
           <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('剧情发送上限（字符）','storyLimit',s.storyLimit,1000,60000)}${number('酒馆模式回复上限（tokens）','replyTokens',s.replyTokens,128,4096)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
-          ${field('Meta 回复要求（可选）','customInstruction',s.customInstruction,4)}<button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存设置</button></form><hr>
-          <h3>Meta 自动总结</h3><label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div>${field('总结提示词（留空使用内置提示词）','summaryInstruction',s.summaryInstruction,5)}<button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p><hr>
-          ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p><hr>` : ''}
-          <h3>备份</h3><p>资料和 meta 对话保存在当前设备。换设备时导出备份，再导入。</p><div class="mc-toolbar"><button type="button" data-action="export">导出完整备份</button><button type="button" data-action="import" ${disabled}>导入备份</button></div><p class="mc-muted">映间 v${VERSION}</p></div>`;
+          <button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存聊天记录设置</button></form><p class="mc-muted">标签、正则及正文剧情记忆的读取来源，在「共看」中设置。</p><button type="button" data-action="tab" data-tab="story">正文读取设置</button>${settingEnd}${settingStart('summary','Meta小手机自动总结','整理你们自己的聊天记忆','summary')}
+          <label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div><button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p>
+          <label class="mc-field"><span>查看哪位联系人的记忆</span><select name="summaryProfile">${state.profiles.map(p=>`<option value="${esc(p.id)}" ${p.id===state.selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
+          ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p>` : ''}
+          ${settingEnd}${settingStart('prompts','提示词设置','头部与 AI 提示词','prompts')}<div class="mc-prompt-label"><strong>头部提示词</strong><small>系统 · 相对位置</small></div>${field('','headPrompt',s.headPrompt ?? HEAD_PROMPT,7)}<div class="mc-prompt-label"><strong>AI提示词</strong><small>模型 · 相对位置</small></div>${field('','aiPrompt',s.aiPrompt ?? AI_PROMPT,8)}<div class="mc-toolbar"><button type="button" class="mc-primary" data-action="save-prompts" ${disabled}>保存提示词</button><button type="button" data-action="reset-prompts" ${disabled}>恢复默认</button></div>${settingEnd}${settingStart('backup','备份及后台日志','保存资料，查看运行情况','backup')}<h3>备份</h3><p>资料和 meta 对话保存在当前设备。换设备时导出备份，再导入。</p><div class="mc-toolbar"><button type="button" data-action="export">导出完整备份</button><button type="button" data-action="import" ${disabled}>导入备份</button></div><h3>后台日志</h3><p class="mc-muted">保留最近 200 条运行记录。这里只记录任务与错误，不记录聊天正文及密钥。</p><div class="mc-log-list" aria-label="后台运行日志">${(state.logs || []).slice(-50).reverse().map(l=>`<article class="mc-log ${l.level==='error'?'mc-log-error':''}"><small>${esc(new Date(l.createdAt).toLocaleString('zh-CN'))} · ${l.level==='error'?'失败':'运行'}</small><span>${esc(l.message)}</span></article>`).join('') || '<p class="mc-muted">还没有运行记录</p>'}</div><div class="mc-toolbar"><button type="button" data-action="export-logs">导出日志</button><button type="button" data-action="clear-logs" ${disabled}>清空日志</button></div>${settingEnd}<p class="mc-settings-version">映间 v${VERSION}</p></div>`;
         const replaced=oldKey!==newKey || this.lastMarkup!==markup;
         if(replaced)this.content.innerHTML=markup;
         this.lastMarkup=markup;this.viewKey=newKey;
@@ -191,10 +212,11 @@ export class Interface {
             else if (n.multiple) for (const o of n.options) o.selected = saved[n.name].includes(o.value);
             else n.value = saved[n.name];
         }
-        this.apiVisibility();this.homeClock();
+        if(this.tab==='roles')for(const n of this.content.querySelectorAll('[name]')){if(!(n.name in this.sourceDraft))continue;const value=this.sourceDraft[n.name];if(n.type==='checkbox')n.checked=value;else if(n.multiple)for(const o of n.options)o.selected=value.includes(o.value);else n.value=value;}
+        this.apiVisibility();this.personaVisibility();this.homeClock();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
-            if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if(i<view.details.length)d.open=view.details[i];
+            if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];
             if(view?.focused && oldKey===newKey) {
                 const input=[...this.content.querySelectorAll('[name]')].find(n=>n.name===view.focused.name);
                 if(input && !input.disabled){input.focus({preventScroll:true});if(typeof view.focused.start==='number')input.setSelectionRange?.(view.focused.start,view.focused.end);input.scrollTop=view.focused.scroll;}
@@ -218,3 +240,7 @@ export class Interface {
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}
 
 function optionalInput(label,name,value,min,max,step) {return `<label class="mc-field"><span>${label}</span><input name="${name}" type="number" value="${esc(value)}" min="${min}" max="${max}" step="${step}" placeholder="留空不发送"></label>`;}
+
+const settingPaths={api:'<path d="M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0V8Zm5 9v4"/>',chat:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8M8 13h5"/>',summary:'<path d="M5 5h14v14H5zM8 9h8M8 12h8M8 15h4M17 3v4M15 5h4"/>',prompts:'<path d="m4 20 4-1L20 7l-3-3L5 16l-1 4ZM14 7l3 3M3 4h6M6 1v6"/>',backup:'<path d="M4 15v5h16v-5M12 3v12m-5-5 5 5 5-5"/>'};
+const settingStart=(key,label,subtitle,symbol)=>`<details class="mc-setting-group" data-view="settings-${key}" data-section="${key}"><summary><span class="mc-setting-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${settingPaths[symbol]}</svg></span><span><strong>${label}</strong><small>${subtitle}</small></span><svg class="mc-setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></summary><div class="mc-setting-body">`;
+const settingEnd='</div></details>';

@@ -50,6 +50,73 @@ export function createHost(root = globalThis) {
                 set.rerender?.();
             } else if(typeof set?.save==='function')await set.save();
         },
+        async currentDefinitions() {
+            const c=context(),originKey=characterKey(c),sourceKey=mainKey(c);
+            if(!originKey)return null;
+            const group=c.groupId!=null && c.groupId!=='' ? c.groups?.find(g=>String(g.id)===String(c.groupId)) : null;
+            const ids=group?(group.members || []).map(avatar=>c.characters.findIndex(card=>card.avatar===avatar)).filter(i=>i>=0):[Number(c.characterId)];
+            if((c.groupId!=null && c.groupId!=='' && !group) || !ids.length)return null;
+            const data=await this.definitions(ids,[],false,true);
+            if(characterKey(context())!==originKey || mainKey(context())!==sourceKey)throw new Error('聊天已切换，取消旧人物素材读取。');
+            return {...data,originKey,fingerprint:sourceFingerprint([data.cards,data.entries,data.userName,data.userPersona])};
+        },
+        async definitions(cardIds,books=[],includeDisabled=false,autoBooks=false) {
+            const c=context(),sourceKey=mainKey(c),cards=[],embedded=[],selections=[...books];
+            const wi=autoBooks ? c.worldInfo || (await (worldModule ??= import('/scripts/world-info.js').catch(()=>null)))?.world_info : null;
+            for(const id of cardIds) {
+                if(typeof c.unshallowCharacter==='function')await c.unshallowCharacter(Number(id));
+                const card=context().characters[Number(id)];
+                if(!card)throw new Error('所选角色卡已不存在，请重新选择。');
+                const d=card.data || card, name=d.name || card.name || '未命名角色';
+                const get=key=>text(d[key] ?? card[key]);
+                const linked=[];
+                if(autoBooks) {
+                    const primary=d.extensions?.world || card.extensions?.world;
+                    if(primary)linked.push({name:primary,ids:null});
+                    for(const book of wi?.charLore?.find(e=>e.name===card.avatar?.replace(/\.[^.]+$/,''))?.extraBooks || [])linked.push({name:book,ids:null});
+                    if(c.chatMetadata?.world_info)linked.push({name:c.chatMetadata.world_info,ids:null});
+                    selections.push(...linked);
+                }
+                cards.push({name,avatar:card.avatar || '',description:get('description'),personality:get('personality'),scenario:get('scenario'),examples:get('mes_example'),sourceText:['description','personality','scenario','mes_example'].map(key=>get(key)?`[${key}]\n${get(key)}`:'').filter(Boolean).join('\n\n'),binding:{avatar:card.avatar || '',autoBooks,books:books.map(b=>({...b})),includeDisabled},linkedBooks:linked.map(b=>b.name)});
+                for(const [key,e] of Object.entries(d.character_book?.entries || {})) {
+                    if(!includeDisabled && (e.disable || e.enabled===false))continue;
+                    if(e.content)embedded.push({id:String(e.uid ?? e.id ?? key),label:`${name} 内嵌世界书 / ${e.comment || e.name || (e.keys || []).join('、') || key}`,content:text(e.content),position:e.position ?? e.extensions?.position ?? 'before_char',order:Number(e.insertion_order ?? e.order)||0,avatar:card.avatar || '',book:''});
+                }
+            }
+            const entries=[...embedded];
+            const merged=new Map();
+            for(const b of selections) {
+                if(!b.name)continue;
+                if(!merged.has(b.name))merged.set(b.name,b.ids===null?null:new Set(b.ids || []));
+                else if(b.ids===null)merged.set(b.name,null);
+                else if(merged.get(b.name))for(const id of b.ids || [])merged.get(b.name).add(id);
+            }
+            for(const [book,ids] of merged) {
+                const available=await this.memoryEntries(book);
+                if(ids && [...ids].some(id=>!available.some(e=>e.id===id)))throw new Error('所选世界书条目已不存在，请重新选择。');
+                for(const e of available) {
+                    if(ids && !ids.has(e.id) || !includeDisabled && e.disabled)continue;
+                    if(e.content)entries.push({...e,label:`世界书 ${book} / ${e.name}`,book,avatar:''});
+                }
+            }
+            entries.sort((a,b)=>b.order-a.order);
+            const sources=[...cards.filter(card=>card.sourceText).map(card=>({label:`角色卡 ${card.name}`,text:card.sourceText})),...entries.map(e=>({label:e.label,text:e.content}))];
+            if(!sources.length)throw new Error('没有读到有效设定，请检查所选条目及启用状态。');
+            if(sources.reduce((n,e)=>n+e.text.length,0)>150000)throw new Error('所选设定超过 15 万字符，请分批选择。');
+            if(mainKey(context())!==sourceKey)throw new Error('读取设定期间聊天已切换，请重试。');
+            return {cards,entries,sources,sourceKey,userName:c.name1 || '用户',userPersona:text(c.powerUserSettings?.persona_description)};
+        },
+        async linkedDefinition(profile) {
+            const binding=profile.binding;
+            if(!binding)throw new Error('这个联系人没有绑定设定来源，请重新选择来源或改用独立人设。');
+            let ids=[];
+            if(binding.avatar) {
+                const id=context().characters.findIndex(card=>card.avatar===binding.avatar);
+                if(id<0)throw new Error('绑定的角色卡已不存在，请重新选择来源或改用独立人设。');
+                ids=[id];
+            }
+            return this.definitions(ids,binding.books,binding.includeDisabled,binding.autoBooks);
+        },
         async currentSources() {
             const ctx=context(); const originKey=characterKey(ctx); const sourceKey=mainKey(ctx);
             if(!originKey)return null;
@@ -113,7 +180,7 @@ export function createHost(root = globalThis) {
             if(typeof c.loadWorldInfo!=='function') throw new Error('当前酒馆不支持读取世界书。');
             const data=await c.loadWorldInfo(book);
             if(!data?.entries) throw new Error(`世界书“${book}”读取失败。`);
-            return Object.entries(data.entries).map(([key,e])=>({id:String(e.uid ?? key),name:e.comment || e.name || (e.key || e.keys || []).join('、') || `条目 ${e.uid ?? key}`,content:text(e.content),disabled:Boolean(e.disable || e.enabled===false)}));
+            return Object.entries(data.entries).map(([key,e])=>({id:String(e.uid ?? key),name:e.comment || e.name || (e.key || e.keys || []).join('、') || `条目 ${e.uid ?? key}`,content:text(e.content),disabled:Boolean(e.disable || e.enabled===false),position:e.position ?? e.extensions?.position ?? 0,order:Number(e.order ?? e.insertion_order)||0}));
         },
         async story(settings) {
             const ctx = context(); const key = mainKey(ctx); const chat = ctx.chat || [];
@@ -158,7 +225,7 @@ export function createHost(root = globalThis) {
             // Recent dialogue comes first, so a bounded request keeps the most relevant scene.
             const body = '[最近正文]\n' + floors.map(f => `第 ${f.index + 1} 条 / ${f.name}\n${f.body}`).join('\n\n') + '\n\n' + sections.join('\n\n') + (warnings.length ? '\n\n[读取情况]\n' + [...new Set(warnings)].join('；') : '');
             if(mainKey(context()) !== key) throw new Error('读取期间主线已切换，请重新同步。');
-            return { key, label, text: body, cutoff: end, capturedAt: Date.now(), frozen:false, floors, memorySource:settings.storyMemorySource || 'baibai', warnings:[...new Set(warnings)] };
+            return { key, label, text: body, proseText:floors.map(f=>`第 ${f.index+1} 条 / ${f.name}\n${f.body}`).join('\n\n'),memoryText:sections.join('\n\n')+(warnings.length?'\n[读取情况] '+warnings.join('；'):''), cutoff: end, capturedAt: Date.now(), frozen:false, floors, memorySource:settings.storyMemorySource || 'baibai', warnings:[...new Set(warnings)] };
         },
         bbsStatus() {
             const b = root.STBaiBaiBook;

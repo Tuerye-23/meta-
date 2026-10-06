@@ -1,16 +1,19 @@
 import { literalMacros } from './core.js';
 
-import { API_PARAMETERS, apiParameters, optionalNumber, validateApi } from './api-config.js';
+import { hasOwn, API_PARAMETERS, apiParameters, optionalNumber, validateApi } from './api-config.js';
 
 export function independentBody(request,value) {
     const {api,extra}=validateApi(value);
     const messages=[],system=[];
     if(request.systemPrompt)system.push(literalMacros(request.systemPrompt));
     for(const m of request.prompt || []) {
-        if(m.role==='system'){system.push(literalMacros(m.content));continue;}
-        if(!['user','assistant'].includes(m.role))throw new Error('API 消息只能使用 system、user 或 assistant 角色。');
+        if(m.role==='system' && api.provider==='claude'){system.push(literalMacros(m.content));continue;}
+        if(!['system','user','assistant'].includes(m.role))throw new Error('API 消息只能使用 system、user 或 assistant 角色。');
         messages.push({role:m.role,content:literalMacros(m.content)});
     }
+    // Older Claude gateways require a user turn before the assistant acknowledgement.
+    if(api.provider==='claude' && messages[0]?.role==='assistant')messages.unshift({role:'user',content:'[后台任务开始] 请执行系统中的任务说明。'});
+    if(api.provider==='claude' && messages.at(-1)?.role==='assistant')messages.push({role:'user',content:'[后台生成触发] 请继续当前任务。'});
     if(api.provider!=='claude' && system.length)messages.unshift({role:'system',content:system.join('\n\n')});
     const body={...extra,model:api.model,messages,stream:false};
     if(api.provider==='claude' && system.length)body.system=system.join('\n\n');
@@ -22,7 +25,7 @@ export function independentBody(request,value) {
     if(api.provider==='claude' && !Number.isInteger(body.max_tokens))throw new Error('Claude 必须填写输出上限（max_tokens）。可点击「填入通用预设」。');
     if(api.provider==='claude') {
         optionalNumber(body.max_tokens,'输出上限',1,1000000,true);
-        for(const [,wire,label,min,max,integer] of apiParameters('claude'))if(Object.hasOwn(body,wire))body[wire]=optionalNumber(body[wire],label,min,max,integer);
+        for(const [,wire,label,min,max,integer] of apiParameters('claude'))if(hasOwn(body,wire))body[wire]=optionalNumber(body[wire],label,min,max,integer);
     }
     return {api,body};
 }
@@ -56,7 +59,7 @@ export function createIndependentClient(root,context) {
             const proxy=proxyConfig(api,native,operation);
             if(api.provider==='claude' && !native && operation==='generate' && api.extraBody)throw new Error('当前 SillyTavern 的 Claude 转发不支持自定义 JSON 参数，请清空此项或选择浏览器直连。TT 2.2.0 转发支持此项。');
             const routed=api.provider==='claude' && body ? {...body,use_sysprompt:true,messages:[...(body.system?[{role:'system',content:body.system}]:[]),...body.messages]}:body;
-            const payload=operation==='models' ? proxy : {...routed,...proxy,custom_include_body:JSON.stringify(body),custom_exclude_body:JSON.stringify([...API_PARAMETERS.map(p=>p[1]),'system','max_tokens','max_completion_tokens','logprobs','top_logprobs','n','stop','stop_sequences','logit_bias'].filter(k=>!Object.hasOwn(body,k)))};
+            const payload=operation==='models' ? proxy : {...routed,...proxy,custom_include_body:JSON.stringify(body),custom_exclude_body:JSON.stringify([...API_PARAMETERS.map(p=>p[1]),'system','max_tokens','max_completion_tokens','logprobs','top_logprobs','n','stop','stop_sequences','logit_bias'].filter(k=>!hasOwn(body,k)))};
             options={method:'POST',headers:{...c.getRequestHeaders()},body:JSON.stringify(payload)};
         } else {
             url=api.baseUrl+(operation==='models'?'/models':api.provider==='claude'?'/messages':'/chat/completions');

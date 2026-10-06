@@ -37,6 +37,7 @@ export class SocialController {
         const {p,t}=app.current(profileId);const entry=comment?social[collectionFor(kind)].find(x=>x.id===entryId):null;
         if(comment && !entry)throw new Error('这条记录已不存在。');
         await app.job(`正在等待 ${p.name} ${comment?'评论':kind==='moment'?'发动态':'写日记'}…`,async()=>{
+            await app.refreshProfile(p);await app.refreshStory(p,t);
             const base=app.request(p,t);const recent=social[collectionFor(kind)].filter(x=>x.authorType==='user' || x.profileId===profileId).slice(-12);
             const readable=x=>x?{authorType:x.authorType,authorName:x.authorName,profileId:x.profileId,title:x.title,text:x.text,createdAt:x.createdAt,imageCount:x.images?.length || 0,comments:x.comments.slice(-12).map(c=>({authorName:c.authorName,text:c.text}))}:null;
             const data={task:kind+(comment?'Comment':''),now:new Date().toLocaleString('zh-CN'),userName:social.userName || app.host.context().name1 || '我',userStatus:social.status,entry:readable(entry),recent:recent.map(readable)};

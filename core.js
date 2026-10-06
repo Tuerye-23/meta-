@@ -1,14 +1,15 @@
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
-export const VERSION = '0.4.1';
+import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY } from './prompts.js';
+export const VERSION = '0.5.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
 
 export function freshState() {
-    return { schema: 1, version: VERSION, social:freshSocial(), profiles: [], threads: [], extractions: {}, selected: '', settings: {
+    return { schema: 1, version: VERSION, social:freshSocial(), profiles: [], threads: [], logs: [], extractions: {}, selected: '', settings: {
         includeStory: true, recentFloors: 12, storyLimit: 12000, replyTokens: 800, historyMessages: 40,
-        intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
+        intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', headPrompt: HEAD_PROMPT, aiPrompt: AI_PROMPT,
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
         api:apiDefaults(),
@@ -19,10 +20,13 @@ export function freshState() {
 export function normalizeProfile(value, provenance = {}) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || !text(value.name).trim()) throw new Error('角色资料缺少姓名。');
     const profile = { id: uid(), name: text(value.name).trim().slice(0, 160), ...provenance };
-    for (const key of ['description', 'personality', 'speech', 'relationship', 'world', 'notes', 'userName', 'userPersona', 'sourceText']) {
+    for (const key of ['description', 'personality', 'speech', 'relationship', 'world', 'notes', 'userName', 'userPersona', 'sourceText', 'scenario', 'worldBefore', 'worldAfter', 'sourceCharacterName']) {
         profile[key] = text(value[key] ?? provenance[key]).slice(0, key === 'sourceText' ? 170000 : 50000);
     }
-    profile.sources = Array.isArray(provenance.sources) ? provenance.sources.filter(x => typeof x === 'string') : [];
+    profile.personaMode = ['inherit','extracted','manual'].includes(value.personaMode) ? value.personaMode : provenance.personaMode || 'manual';
+    const binding=value.binding ?? provenance.binding;
+    profile.binding=binding && typeof binding==='object' ? {avatar:text(binding.avatar),autoBooks:binding.autoBooks===true,books:Array.isArray(binding.books)?binding.books.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[],includeDisabled:binding.includeDisabled===true} : null;
+    profile.sources = Array.isArray(value.sources ?? provenance.sources) ? (value.sources ?? provenance.sources).filter(x => typeof x === 'string') : [];
     profile.sourceKey = text(provenance.sourceKey);
     return profile;
 }
@@ -51,6 +55,7 @@ export function validateBackup(input) {
         const story = t.story && typeof t.story.text === 'string' ? {
             key: text(t.story.key), label: text(t.story.label), text: t.story.text.slice(0, 200000),
             cutoff: Number(t.story.cutoff), capturedAt: Number(t.story.capturedAt) || 0, frozen: false,
+            proseText:typeof t.story.proseText==='string'?t.story.proseText.slice(0,200000):undefined,memoryText:text(t.story.memoryText).slice(0,200000),
             floors: Array.isArray(t.story.floors) ? t.story.floors.filter(f => Number.isInteger(f.index) && typeof f.body === 'string').map(f => ({ index: f.index, name: text(f.name), body: f.body })) : [],
         } : null;
         out.threads.push({ id: t.id, profileId: t.profileId, messages, story,
@@ -60,6 +65,7 @@ export function validateBackup(input) {
     }
     for (const p of out.profiles) if (!out.threads.some(t => t.profileId === p.id)) out.threads.push(newThread(p.id));
     out.social=normalizeSocial(input.social,[...ids]);
+    out.logs=Array.isArray(input.logs)?input.logs.filter(l=>typeof l?.message==='string').slice(-200).map(l=>({createdAt:Number(l.createdAt)||0,level:l.level==='error'?'error':'info',message:l.message.slice(0,800)})):[];
     out.qrInstalled=input.qrInstalled===true;
     out.selected = ids.has(input.selected) ? input.selected : out.profiles[0]?.id || '';
     if(input.extractions && typeof input.extractions==='object') for(const [key,value] of Object.entries(input.extractions).slice(0,200)) {
@@ -72,7 +78,7 @@ export function validateBackup(input) {
         recentFloors: clamp(s.recentFloors, 1, 60, 12), storyLimit: clamp(s.storyLimit, 1000, 60000, 12000),
         replyTokens: clamp(s.replyTokens, 128, 4096, 800), historyMessages: clamp(s.historyMessages, 4, 200, 40),
         intervalMinutes: clamp(s.intervalMinutes, 2, 120, 10), maxProactive: clamp(s.maxProactive, 1, 20, 3),
-        activity: text(s.activity) || '待一会儿', customInstruction: text(s.customInstruction),
+        activity: text(s.activity) || '待一会儿', headPrompt:typeof s.headPrompt==='string'?s.headPrompt.slice(0,30000):HEAD_PROMPT,aiPrompt:typeof s.aiPrompt==='string'?s.aiPrompt.slice(0,30000):AI_PROMPT,
         includeTags: text(s.includeTags), excludeTags: text(s.excludeTags),
         regexIds: Array.isArray(s.regexIds) ? [...new Set(s.regexIds.filter(x => typeof x === 'string'))].slice(0,100) : [],
         regexCapture: clamp(s.regexCapture,0,20,1),
@@ -229,32 +235,60 @@ export function mainKey(ctx) {
     return JSON.stringify(ctx.groupId ? ['group', String(ctx.groupId), String(chat)] : ['character', ctx.characters?.[ctx.characterId]?.avatar || ctx.name2 || '', String(chat)]);
 }
 
-export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = '', activity = '', elapsed = 0 } = {}) {
-    const parts = [
-        `你正在扮演 ${profile.name}，和 ${profile.userName || '用户'} 在独立的 meta 空间相处。`,
-        '沿用下面资料中的性格、语言习惯、世界背景和双方关系。关系没有说明时保持未知，不擅自设为恋人。',
-        '双方可以共同观看另一个平行世界的自己。观看记录是那个世界的经历；meta 对话是眼前双方自己的互动。准确区分两个世界、两份记忆和人物归属。可以有偏见、嘴硬、幽默、情绪，也可以逐渐改变关系。',
-        '自然回应当前话题，可以聊日常或一起待着。仅写当前所选角色的回复；不要替对方发言或操控对方。默认用中文、正常段落，动作简短，长度随话题。',
-        '[角色资料]\n' + [['外貌与身份', profile.description], ['性格', profile.personality], ['表达习惯', profile.speech], ['原设定关系', profile.relationship], ['世界', profile.world], ['补充', profile.notes]].filter(([,v]) => v).map(([k,v]) => `${k}：${replaceNames(v, profile.userName || '用户', profile.name)}`).join('\n'),
-        '[对方设定]\n' + replaceNames(profile.userPersona || '未提供详细设定', profile.userName || '用户', profile.name),
-    ];
-    if (settings.customInstruction) parts.push('[用户设置的 meta 回复要求]\n' + settings.customInstruction);
-    if (thread.memory?.text) parts.push('[我们在 meta 中形成的记忆]\n' + thread.memory.text);
-    let storyClipped = false;
-    if (settings.includeStory && thread.story?.text) {
-        storyClipped = thread.story.text.length > settings.storyLimit;
-        parts.push('[共同观看的平行世界记录，属于另一个世界]\n' + thread.story.text.slice(0, settings.storyLimit) + (storyClipped ? '\n[记录达到发送长度限制，后续内容未提供，不要猜测。]' : ''));
+export function chatExamples(value,user,character,sourceName='') {
+    const material=replaceNames(value,user,character);
+    const names=[user,character,sourceName].filter(Boolean);
+    const roles=new Map([[user,'user'],[sourceName || character,'assistant'],[character,'assistant']]);
+    const prefix=new RegExp('^('+[...new Set(names)].map(escapeRegex).join('|')+')[:：][ \t]*','gm');
+    const messages=[];
+    for(const block of material.split(/<START>/i).filter(b=>b.trim())) {
+        const matches=[...block.matchAll(prefix)];
+        if(!matches.length || block.slice(0,matches[0].index).trim())return [];
+        for(const [i,m] of matches.entries()) {
+            const content=block.slice(m.index+m[0].length,matches[i+1]?.index ?? block.length).trim();
+            if(content)messages.push({role:roles.get(m[1]),content:literalMacros(content)});
+        }
     }
-    if (activity) parts.push(`[当前一起做的事]\n${activity}\n已一起待了约 ${Math.floor(elapsed / 60000)} 分钟。`);
-    const boundary = thread.messages.findIndex(m => m.id === thread.memory?.throughId);
-    const afterMemory = boundary >= 0 ? thread.messages.slice(boundary + 1) : thread.messages;
-    const all = afterMemory.filter(m => ['user', 'assistant', 'note'].includes(m.role));
-    const selected = all.slice(-settings.historyMessages);
-    const messages = selected.map(m => ({ role: m.role === 'note' ? 'system' : m.role, content: m.role === 'note' ? '[Meta 活动记录]\n' + m.text : m.text }));
-    if (all.length > selected.length) parts.push('[较早的部分 meta 消息未载入当前窗口，不要假装记得。]');
-    if (kind === 'proactive') messages.push({ role: 'user', content: '[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。' });
-    if (kind === 'annotation') messages.push({ role: 'user', content: '请对这段平行世界片段留一句你自己的批注：\n' + quote });
-    return { systemPrompt: parts.join('\n\n'), prompt: messages, omitted: all.length - selected.length, storyClipped };
+    return messages;
+}
+
+export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = '', activity = '', elapsed = 0 } = {}) {
+    const user=profile.userName || '用户';
+    const bind=value=>literalMacros(replaceNames(value,user,profile.name));
+    const messages=[];
+    const push=(role,content)=>{if(content?.trim())messages.push({role,content:bind(content)});};
+    push('assistant',settings.aiPrompt ?? AI_PROMPT);
+    push('system',TASK_PROMPT);
+    // These are actual Prompt Manager data slots, in their intended order.
+    push('system',profile.worldBefore && '[World Info (before)]\n'+profile.worldBefore);
+    push('system','[Persona Description]\n'+(profile.userPersona || '未提供详细设定'));
+    push('system','[Char Description]\n'+(profile.description || '未提供详细设定'));
+    push('system',profile.personality && '[Char Personality]\n'+profile.personality);
+    push('system',profile.scenario && '[Scenario]\n'+profile.scenario);
+    push('system',[profile.worldAfter,profile.world,profile.relationship && '双方关系：'+profile.relationship,profile.notes].filter(Boolean).join('\n\n'));
+    push('system',DEFINITIONS_AFTER);
+    if(profile.speech){const examples=chatExamples(profile.speech,user,profile.name,profile.sourceCharacterName);push('system','[Chat Examples / 说话方式参考，非当前聊天经历]');if(examples.length)messages.push(...examples);else push('system',profile.speech);push('system','[对白示例结束]');}
+    let storyClipped=false;
+    let prose='',memory='';
+    if(settings.includeStory && thread.story?.text) {
+        const source=thread.story.proseText ?? thread.story.text;
+        const limit=settings.storyLimit;
+        prose=source.slice(0,limit);
+        memory=text(thread.story.memoryText).slice(0,Math.max(0,limit-prose.length));
+        storyClipped=source.length+text(thread.story.memoryText).length>limit;
+    }
+    push('system',STORY_PROMPT+'\n\n<主线剧情记忆>\n'+memory+'\n</主线剧情记忆>\n<主线正文历史>\n'+prose+(storyClipped?'\n[记录达到发送长度限制，后续内容未提供，不要猜测。]':'')+'\n</主线正文历史>');
+    const boundary=thread.messages.findIndex(m=>m.id===thread.memory?.throughId);
+    const all=thread.messages.slice(boundary+1).filter(m=>['user','assistant','note'].includes(m.role));
+    const selected=all.slice(-settings.historyMessages);
+    push('system',MEMORY_PROMPT+'\n\n<Meta聊天记忆>\n'+literalMacros(thread.memory?.text || '')+'\n</Meta聊天记忆>'+(all.length>selected.length?'\n[较早的部分 Meta 消息未载入当前窗口，不要假装记得。]':''));
+    if(activity)push('system',`[Meta 活动记录]\n当前一起做的事：${activity}\n已一起待了约 ${Math.floor(elapsed/60000)} 分钟。`);
+    // Stored conversation is data: names and other macros in user messages stay literal.
+    for(const m of selected)messages.push({role:m.role==='note'?'system':m.role,content:literalMacros(m.role==='note'?'[Meta 活动记录]\n'+m.text:m.text)});
+    if(kind==='proactive')push('user','[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。');
+    if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
+    push('system',POST_HISTORY);
+    return {systemPrompt:bind(settings.headPrompt ?? HEAD_PROMPT),prompt:messages,omitted:all.length-selected.length,storyClipped};
 }
 
 export function addMessage(thread, role, content, kind = 'chat') {

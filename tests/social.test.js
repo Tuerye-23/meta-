@@ -34,7 +34,7 @@ test('empty prompts never schedule a request or consume quota; failures back off
 });
 function fixture(){
  const state=freshState();const p=normalizeProfile({name:'Alpha'});state.profiles=[p];state.threads=[newThread(p.id)];state.social.settings.diaryRoles=[p.id];state.social.settings.diaryCommentRoles=[p.id];state.social.settings.diaryDaily=1;
- const app={state,disposed:false,busy:false,host:{generate:async()=> '生成内容',context:()=>({name1:'我'}),busy:false},current:()=>({p,t:state.threads[0]}),request:()=>({systemPrompt:'角色资料',prompt:[]}),save:async()=>{},ui:{open:true,socialSheet:'',resetDraft(){},notice(){}},job:async(title,fn)=>fn()};return {app,p};
+ const app={state,disposed:false,busy:false,host:{generate:async()=> '生成内容',context:()=>({name1:'我'}),busy:false},current:()=>({p,t:state.threads[0]}),request:()=>({systemPrompt:'角色资料',prompt:[]}),save:async()=>{},ui:{open:true,socialSheet:'',resetDraft(){},notice(){}},refreshProfile:async()=>{},refreshStory:async()=>{},job:async(title,fn)=>fn()};return {app,p};
 }
 test('controller enforces blank prompts, selected-role permission and shared manual/automatic caps',async()=>{
  const {app,p}=fixture();const controller=new SocialController(app);
@@ -49,8 +49,8 @@ test('controller enforces blank prompts, selected-role permission and shared man
 test('late generation response cannot leak into an imported state or a deleted diary',async()=>{
  const {app,p}=fixture();const controller=new SocialController(app);SOCIAL_PROMPTS.diary='test';SOCIAL_PROMPTS.diaryComment='test';
  try {
- let release;app.host.generate=()=>new Promise(resolve=>release=resolve);const original=app.state;const pending=controller.generate('diary',p.id);app.state=freshState();release('late');await pending;assert.equal(original.social.diaries.length,0);assert.equal(app.state.social.diaries.length,0);
- app.state=original;const entry=createEntry({text:'my diary'});original.social.diaries.push(entry);const comment=controller.generate('diary',p.id,entry.id);original.social.diaries=[];release('late comment');await comment;assert.equal(entry.comments.length,0);
+ let release;app.host.generate=()=>new Promise(resolve=>release=resolve);const original=app.state;const pending=controller.generate('diary',p.id);await new Promise(r=>setImmediate(r));app.state=freshState();release('late');await pending;assert.equal(original.social.diaries.length,0);assert.equal(app.state.social.diaries.length,0);
+ app.state=original;const entry=createEntry({text:'my diary'});original.social.diaries.push(entry);const comment=controller.generate('diary',p.id,entry.id);await new Promise(r=>setImmediate(r));original.social.diaries=[];release('late comment');await comment;assert.equal(entry.comments.length,0);
  }finally{controller.destroy();SOCIAL_PROMPTS.diary='';SOCIAL_PROMPTS.diaryComment='';}
 });
 

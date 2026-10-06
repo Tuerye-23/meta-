@@ -1,3 +1,4 @@
+export const hasOwn=(value,key)=>Object.prototype.hasOwnProperty.call(value,key);
 const text=value=>typeof value==='string'?value:'';
 export const API_PARAMETERS = [
     ['temperature','temperature','温度',0,2,false],
@@ -49,8 +50,8 @@ export function validateApi(value,requireModel=true) {
         try{extra=JSON.parse(api.extraBody);}catch{throw new Error('自定义请求参数需为有效 JSON 对象。');}
         if(!extra || typeof extra!=='object' || Array.isArray(extra))throw new Error('自定义请求参数需为 JSON 对象。');
         const reserved=['messages','system','model','stream','chat_completion_source','custom_url','custom_api_format','reverse_proxy','proxy_password','custom_include_headers','custom_include_body','custom_exclude_body','secret_id'];
-        if(reserved.some(k=>Object.hasOwn(extra,k)))throw new Error('自定义参数不能覆盖模型、消息、流式设置或连接配置。');
-        if(api.provider==='claude' && ['frequency_penalty','presence_penalty','repetition_penalty','seed','max_completion_tokens'].some(k=>Object.hasOwn(extra,k)))throw new Error('Claude 不支持这些 OpenAI 参数，请删除对应自定义参数。');
+        if(reserved.some(k=>hasOwn(extra,k)))throw new Error('自定义参数不能覆盖模型、消息、流式设置或连接配置。');
+        if(api.provider==='claude' && ['frequency_penalty','presence_penalty','repetition_penalty','seed','max_completion_tokens'].some(k=>hasOwn(extra,k)))throw new Error('Claude 不支持这些 OpenAI 参数，请删除对应自定义参数。');
     }
     return {api,extra};
 }
