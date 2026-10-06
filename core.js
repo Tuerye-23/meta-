@@ -1,10 +1,10 @@
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
 
 export function freshState() {
-    return { schema: 1, version: VERSION, profiles: [], threads: [], selected: '', settings: {
+    return { schema: 1, version: VERSION, profiles: [], threads: [], extractions: {}, selected: '', settings: {
         includeStory: true, recentFloors: 12, storyLimit: 12000, replyTokens: 800, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
@@ -57,6 +57,11 @@ export function validateBackup(input) {
     }
     for (const p of out.profiles) if (!out.threads.some(t => t.profileId === p.id)) out.threads.push(newThread(p.id));
     out.selected = ids.has(input.selected) ? input.selected : out.profiles[0]?.id || '';
+    if(input.extractions && typeof input.extractions==='object') for(const [key,value] of Object.entries(input.extractions).slice(0,200)) {
+        if(!value || typeof value.fingerprint!=='string' || !Array.isArray(value.profileIds))continue;
+        const profileIds=value.profileIds.filter(id=>ids.has(id));
+        if(profileIds.length)Object.defineProperty(out.extractions,key,{value:{fingerprint:value.fingerprint,profileIds},enumerable:true,writable:true,configurable:true});
+    }
     const s = input.settings || {};
     out.settings = { includeStory: s.includeStory !== false,
         recentFloors: clamp(s.recentFloors, 1, 60, 12), storyLimit: clamp(s.storyLimit, 1000, 60000, 12000),
@@ -73,6 +78,20 @@ export function validateBackup(input) {
         summaryInstruction: text(s.summaryInstruction),
     };
     return out;
+}
+
+export function characterKey(context) {
+    if(context.groupId!==undefined && context.groupId!==null && context.groupId!=='')return 'group:'+context.groupId;
+    if(context.characterId===undefined || context.characterId===null || context.characterId==='')return '';
+    const card=context.characters?.[Number(context.characterId)];
+    return card ? 'card:'+(card.avatar || card.name || card.data?.name || context.characterId) : '';
+}
+
+export function sourceFingerprint(sources) {
+    const material=JSON.stringify(sources);
+    let hash=2166136261;
+    for(let i=0;i<material.length;i++)hash=Math.imul(hash^material.charCodeAt(i),16777619);
+    return material.length+':'+(hash>>>0).toString(16);
 }
 
 export function tagNames(value) {

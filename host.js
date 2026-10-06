@@ -1,4 +1,4 @@
-import { chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, text, uid, validateBackup, freshState } from './core.js';
+import { characterKey, chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
 
 export function createHost(root = globalThis) {
     const context = () => {
@@ -9,6 +9,7 @@ export function createHost(root = globalThis) {
     let hostBusy = false;
     const listeners = [];
     let regexModule;
+    let worldModule;
     const enabledRegexes = async () => {
         const c=context();
         if(c.extensionSettings?.disabledExtensions?.includes('regex')) return [];
@@ -21,7 +22,7 @@ export function createHost(root = globalThis) {
         get busy() { return hostBusy || Boolean(context().streamingProcessor && !context().streamingProcessor.isFinished); },
         initEvents(onChange) {
             const c = context();
-            for (const name of ['GENERATION_STARTED', 'GENERATION_ENDED', 'GENERATION_STOPPED', 'CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'WORLDINFO_UPDATED', 'SETTINGS_UPDATED', 'PRESET_CHANGED']) {
+            for (const name of ['APP_READY', 'APP_INITIALIZED', 'EXTENSIONS_FIRST_LOAD', 'GENERATION_STARTED', 'GENERATION_ENDED', 'GENERATION_STOPPED', 'CHAT_CHANGED', 'MESSAGE_SENT', 'MESSAGE_RECEIVED', 'MESSAGE_EDITED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'WORLDINFO_UPDATED', 'SETTINGS_UPDATED', 'PRESET_CHANGED']) {
                 const type = c.eventTypes?.[name]; if (!type) continue;
                 const fn = (...args) => { if (name === 'GENERATION_STARTED' && args[2] === true) return; if (name === 'GENERATION_STARTED') hostBusy = true; if (name === 'GENERATION_ENDED' || name === 'GENERATION_STOPPED') hostBusy = false; onChange(name); };
                 c.eventSource?.on(type, fn); listeners.push(() => c.eventSource?.removeListener(type, fn));
@@ -41,8 +42,31 @@ export function createHost(root = globalThis) {
             if (typeof result !== 'string' || !result.trim()) throw new Error('模型没有返回有效文字。');
             return result.trim();
         },
+        async currentSources() {
+            const ctx=context(); const originKey=characterKey(ctx); const sourceKey=mainKey(ctx);
+            if(!originKey)return null;
+            const group=ctx.groupId!=null ? ctx.groups?.find(g=>String(g.id)===String(ctx.groupId)) : null;
+            const cards=group ? (group.members || []).map(avatar=>ctx.characters.findIndex(c=>c.avatar===avatar)).filter(id=>id>=0) : [Number(ctx.characterId)];
+            if((ctx.groupId!=null && ctx.groupId!=='' && !group) || !cards.length)return null;
+            for(const id of cards)if(typeof ctx.unshallowCharacter==='function')await ctx.unshallowCharacter(id);
+            if(characterKey(context())!==originKey || mainKey(context())!==sourceKey)throw new Error('聊天已切换，取消旧人物素材读取。');
+            const wi=ctx.worldInfo || (await (worldModule ??= import('/scripts/world-info.js').catch(()=>null)))?.world_info;
+            const books=new Set();
+            for(const id of cards) {
+                const card=context().characters[id];
+                const primary=card?.data?.extensions?.world || card?.extensions?.world;
+                if(primary)books.add(primary);
+                const fileName=card?.avatar?.replace(/\.[^.]+$/,'');
+                const extra=wi?.charLore?.find(e=>e.name===fileName)?.extraBooks || [];
+                for(const name of extra)if(name)books.add(name);
+            }
+            if(ctx.chatMetadata?.world_info)books.add(ctx.chatMetadata.world_info);
+            const data=await this.sources(cards.map(String),[...books]);
+            if(characterKey(context())!==originKey || mainKey(context())!==sourceKey)throw new Error('聊天已切换，取消旧人物素材读取。');
+            return {...data,originKey,fingerprint:sourceFingerprint([data.sources,data.userName,data.userPersona])};
+        },
         async sources(cardIds, books, includeDisabled = false) {
-            const ctx = context(); const sources = [];
+            const ctx = context(); const sourceKey=mainKey(ctx); const sources = [];
             const user = ctx.name1 || '用户';
             const persona = ctx.powerUserSettings?.persona_description || '';
             for (const id of cardIds) {
@@ -71,7 +95,8 @@ export function createHost(root = globalThis) {
             if (!sources.length) throw new Error('没有读到有效设定，请选择角色卡或世界书。');
             const length = sources.reduce((n,s) => n+s.text.length, 0);
             if (length > 150000) throw new Error('选中的素材超过 15 万字符，请分批选择后提取。');
-            return { sources, chunks: chunkSources(sources), userName: user, userPersona: persona, sourceKey: mainKey(context()) };
+            if(mainKey(context())!==sourceKey)throw new Error('读取设定期间聊天已切换，请重试。');
+            return { sources, chunks: chunkSources(sources), userName: user, userPersona: persona, sourceKey };
         },
         enabledRegexes,
         async memoryEntries(book) {

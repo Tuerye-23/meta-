@@ -49,3 +49,16 @@ test('state persistence survives restart and serializes overlapping saves in ord
     const{root}=fixture();const host=createHost(root);const store=new StateStore(host,root);const state=await store.init();const p=normalizeProfile({name:'A'});state.profiles.push(p);state.selected=p.id;
     const first=store.save(state);state.profiles[0].name='B';const second=store.save(state);await Promise.all([first,second]);const restarted=await new StateStore(host,root).init();assert.equal(restarted.profiles[0].name,'B');assert.equal(restarted.threads.length,1);
 });
+
+test('current chat automatically collects embedded, primary, extra and chat lorebooks without reading unrelated books',async()=>{
+    const {c,root}=fixture();c.characters[0].data.extensions={world:'主世界'};c.worldInfo={charLore:[{name:'card',extraBooks:['附加世界','主世界']},{name:'other',extraBooks:['别的卡']} ]};c.chatMetadata={world_info:'聊天世界'};
+    const loaded=[];c.loadWorldInfo=async name=>{loaded.push(name);return{entries:{0:{content:name+'的设定'},1:{content:'关闭条目',disable:true}}};};
+    const data=await createHost(root).currentSources();assert.deepEqual(loaded,['主世界','附加世界','聊天世界']);assert.equal(data.originKey,'card:card.png');assert.match(data.sources.map(s=>s.text).join(''),/A冷淡|聊天世界的设定/);assert.doesNotMatch(data.sources.map(s=>s.text).join(''),/关闭条目/);
+});
+test('group chat automatically reads all member cards and their bound worlds',async()=>{
+    const {c,root}=fixture();c.characters[0].data.extensions={world:'第一本'};c.characters.push({avatar:'b.png',name:'B卡',description:'B的设定',data:{extensions:{world:'第二本'}}});c.worldInfo={};c.groupId='group';c.characterId=undefined;c.groups=[{id:'group',members:['card.png','b.png','missing.png']}];
+    const loaded=[];c.loadWorldInfo=async name=>{loaded.push(name);return{entries:{0:{content:name}}};};const data=await createHost(root).currentSources();assert.equal(data.originKey,'group:group');assert.deepEqual(loaded,['第一本','第二本']);assert.match(data.chunks.join(''),/B的设定/);
+});
+test('switching chat while reading automatic sources rejects the stale result',async()=>{
+    const {c,root}=fixture();c.worldInfo={};c.characters[0].data.extensions={world:'主世界'};c.loadWorldInfo=async()=>{c.chatId='另一段聊天';return{entries:{0:{content:'世界设定'}}};};await assert.rejects(()=>createHost(root).currentSources(),/切换/);
+});

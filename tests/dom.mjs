@@ -23,8 +23,16 @@ const fill=(name,value)=>{assert.ok($(`[name="${name}"]`),name);$(`[name="${name
 const switchRole=name=>{const select=$('#mc-profile');select.value=[...select.options].find(o=>o.textContent===name).value;select.dispatchEvent(new window.Event('change'));};
 try {
  await import(pathToFileURL(path.join(base,'index.js')).href);document.dispatchEvent(new window.Event('DOMContentLoaded'));
- await wait(()=>$('#mc-wand-button'),'initialization');assert.equal($('#mc-launcher'),null);click('#mc-wand-button');click('[data-tab="roles"]');click('[data-action="extract"]');
+ await wait(()=>$('#mc-wand-button'),'initialization');assert.equal($('#mc-launcher'),null);click('#mc-wand-button');
+ await wait(()=>$('#mc-profile').options.length===2 && !$('#mc-status').textContent.includes('正在输入'),'automatic extraction');click('[data-tab="roles"]');
  await wait(()=>$('#mc-profile').options.length===2,'multi character extraction');assert.equal($('[name="name"]').value,'Alpha');
+ assert.match(window.mockRequests[0].prompt[0].content,/城市背景/);
+ globalThis.quickReplyApi=window.quickReplyApi;window.mockEmit('APP_READY');await wait(()=>window.qrCalls.includes('/meta'),'delayed QR import');assert.deepEqual([...window.qrCalls],['set','/meta','enable']);window.mockEmit('APP_READY');await sleep(10);assert.equal(window.qrCalls.length,3);
+ const extractions=()=>window.mockRequests.filter(r=>r.systemPrompt.includes('人物设定整理器')).length;
+ click('[data-action="close"][aria-label]');click('#mc-wand-button');await sleep(350);assert.equal(extractions(),1,'unchanged card must reuse extraction');
+ fill('personality','我自己修改的人设');click('[data-action="save-profile"]');await wait(()=>$('#mc-notice').textContent.includes('角色资料已保存'),'manual edits');
+ window.mockContext.characters[0].description+='新的设定';window.mockEmit('WORLDINFO_UPDATED');await wait(()=>extractions()===2 && !$('#mc-status').textContent.includes('正在输入'),'source refresh');assert.equal($('[name="personality"]').value,'我自己修改的人设');assert.equal($('#mc-profile').options.length,2);
+
  click('[data-tab="chat"]');fill('draft','我的第一条');window.mockDelay=100;click('[data-action="send"]');switchRole('Beta');
  await wait(()=>!$('#mc-status').textContent.includes('正在输入'),'role-switch generation');assert.ok(!$('.mc-messages').textContent.includes('我的第一条'));
  switchRole('Alpha');assert.ok($('.mc-messages').textContent.includes('我的第一条'));assert.ok($('.mc-messages').textContent.includes('Alpha：收到'));
@@ -51,8 +59,11 @@ try {
  assert.equal(failSummary,false);assert.deepEqual(readState().threads[0].memory,previousMemory);assert.ok(readState().threads[0].messages.some(m=>m.text==='总结失败也要保留回复3'));
  fill('draft','再次总结');click('[data-action="send"]');await wait(()=>!$('#mc-status').textContent.includes('正在输入'),'summary retry');assert.notEqual(readState().threads[0].memory.throughId,previousMemory.throughId);
  const saved=readState();assert.equal(saved.profiles.length,2);assert.equal(saved.settings.customInstruction,'自然一点');assert.equal(saved.threads[0].story.frozen,false);assert.equal(saved.settings.storyMemorySource,'worldbook');assert.ok(saved.threads[0].messages.some(m=>m.text.includes('便利店停电了')));
- const calls=[];globalThis.quickReplyApi={getSetByName:()=>true,getQrByLabel:()=>false,createSet:async()=>{},createQuickReply:(name,label,props)=>calls.push(props.message),addGlobalSet:()=>{}};
- click('[data-tab="settings"]');click('[data-action="create-qr"]');await wait(()=>$('#mc-notice').textContent.includes('已添加'),'QR');assert.deepEqual(calls,['/meta']);
+ click('[data-tab="settings"]');assert.equal($('[data-action="create-qr"]'),null);
  globalThis.STMetaCompanion.destroy();await import(pathToFileURL(path.join(base,'index.js')).href+'?reload=1');await wait(()=>$('#mc-wand-button'),'restart');click('#mc-wand-button');assert.ok($('.mc-messages').textContent.includes('我的第一条'));
+ const beforeRestart=extractions();await sleep(400);assert.equal(extractions(),beforeRestart);assert.equal(window.qrCalls.length,3,'restart must not reimport QR or reenable a user-disabled set');
+ window.mockContext.chatId='同卡另一个聊天';window.mockEmit('CHAT_CHANGED');await sleep(400);assert.equal(extractions(),beforeRestart);assert.equal($('#mc-profile').options.length,2);
+ const originalDescription=window.mockContext.characters[0].description;window.mockContext.characters[0].description+='失败测试';window.failOnce=true;window.mockEmit('WORLDINFO_UPDATED');await wait(()=>$('#mc-notice').textContent.includes('人物自动提取未完成'),'automatic extraction failure');const failedCount=extractions();await sleep(700);assert.equal(extractions(),failedCount,'no automatic retry storm');click('[data-action="close"][aria-label]');click('#mc-wand-button');await wait(()=>extractions()===failedCount+1 && !$('#mc-status').textContent.includes('正在输入'),'reopen retry');assert.equal($('#mc-profile').options.length,2);
+ window.mockContext.characters.push({name:'另一张卡',avatar:'another.png',description:'两个测试人物'});window.mockDelay=200;window.mockContext.characterId=1;window.mockEmit('CHAT_CHANGED');await wait(()=>$('#mc-status').textContent.includes('正在输入'),'switched-card extraction');window.mockContext.characterId=0;window.mockEmit('CHAT_CHANGED');await sleep(750);assert.equal($('#mc-profile').options.length,2,'stale extraction must not add contacts');assert.equal(readState().profiles.length,2);window.mockDelay=0;
  assert.deepEqual(errors,['模拟网络失败']);console.log('DOM interaction tests passed: wand, QR, extraction, role isolation, live sync/edit, tag/regex filters, worldbook memory, automatic meta summary, annotations, retry, companionship, restart.');
 } finally {globalThis.STMetaCompanion?.destroy();console.error=oldError;await window.happyDOM.close();}

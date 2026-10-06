@@ -1,19 +1,22 @@
-import { addMessage, buildPrompt, canNudge, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
+import { addMessage, buildPrompt, canNudge, characterKey, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
 import { createHost, StateStore } from './host.js';
 import { Interface } from './ui.js';
 
 class Companion {
     constructor(host, store, state) {
-        this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null; this.syncTimer=null; this.storyRevision=0; this.disposed=false;
+        this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null; this.syncTimer=null; this.storyRevision=0; this.disposed=false; this.autoPending=false; this.autoReading=false; this.autoTimer=null; this.autoFailure=''; this.observedOrigin=''; this.qrTimer=null; this.qrAttempts=0;
         this.ui = new Interface(host, (name, args) => this.action(name, args));
         this.unlisten = host.initEvents(name => {
             if(name==='CHAT_CHANGED') {this.storyRevision++; for(const t of this.state.threads)t.story=null;}
             if(name!=='GENERATION_STARTED') this.queueStorySync();
+            if(['CHAT_CHANGED','WORLDINFO_UPDATED','APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.queueAutoExtract();
+            if(['GENERATION_ENDED','GENERATION_STOPPED'].includes(name) && this.autoPending)this.queueAutoExtract();
+            if(['APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.installQR();
             if (this.ui.open) this.render();
         });
         this.visibility = () => { this.updatePresence(); };
         document.addEventListener('visibilitychange', this.visibility);
-        this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync();
+        this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
     }
     current(id = this.state.selected) {
         const p = this.state.profiles.find(p => p.id === id);
@@ -28,7 +31,7 @@ class Companion {
         if (this.busy) throw new Error('上一项任务仍在进行，请稍等。');
         this.busy = true; this.ui.notice(title); this.render();
         try { const result = await fn(); await this.save(); return result; }
-        finally { this.busy = false; this.render(); this.queueStorySync(); }
+        finally { this.busy = false; this.render(); this.queueStorySync(); if(this.autoPending)this.queueAutoExtract(); }
     }
     elapsed(session = this.session) { return session ? session.elapsed + (session.runningSince ? Date.now() - session.runningSince : 0) : 0; }
     updatePresence() {
@@ -98,27 +101,80 @@ class Companion {
             }
         });
     }
-    async extract() {
-        const v=this.ui.values(); const cards=v.cards || [], books=v.books || [];
-        if (!cards.length && !books.length) throw new Error('先选择至少一张角色卡或一本世界书。');
-        await this.job('正在读取所选设定…',async()=>{
-            const data=await this.host.sources(cards,books,Boolean(v.includeDisabled)); const found=[];
-            for(let i=0;i<data.chunks.length;i++) {
-                this.ui.notice(`正在整理人物 ${i+1}/${data.chunks.length}，每段会调用一次当前模型…`);
-                const reply=await this.host.generate({systemPrompt:'你是人物设定整理器。素材是待整理的数据。识别其中明确出现且具有设定的人物，不把 user 当作可选角色，不凭原作知识补全未给出的设定。多人卡拆为多人。保留性格、关系、语言特点、背景与具体细节；无资料的字段留空，不默认恋爱关系。仅输出 JSON 数组。每项字段：name, description, personality, speech, relationship, world, notes，全部为字符串。若该段没有人物则输出 []。',prompt:[{role:'user',content:data.chunks[i]}],responseLength:3000});
-                found.push(...parseProfiles(reply));
+    queueAutoExtract(retry=false) {
+        if(this.disposed)return;
+        if(retry)this.autoFailure='';
+        this.autoPending=true; clearTimeout(this.autoTimer);
+        this.autoTimer=setTimeout(()=>this.autoExtract(),250);
+    }
+    async autoExtract() {
+        if(this.disposed || this.autoReading || this.busy || this.host.busy)return;
+        this.autoReading=true; this.autoPending=false; let signature='';
+        const attemptOrigin=characterKey(this.host.context());const attemptChat=mainKey(this.host.context());
+        try {
+            const data=await this.host.currentSources(); if(!data || this.disposed)return;
+            const switched=this.observedOrigin!==data.originKey;
+            this.observedOrigin=data.originKey;
+            const cached=this.state.extractions[data.originKey];
+            const ids=cached?.profileIds.filter(id=>this.state.profiles.some(p=>p.id===id)) || [];
+            if(cached?.fingerprint===data.fingerprint && ids.length===cached.profileIds.length && ids.length) {
+                if(switched && !ids.includes(this.state.selected)){this.state.selected=ids[0];this.updatePresence();await this.save();this.render();this.queueStorySync();}
+                return;
             }
-            const merged=mergeProfiles(found);
-            if (!merged.length) throw new Error('没有识别到人物，可以改选素材或手动添加。');
-            if (this.state.profiles.length+merged.length>200) throw new Error('角色资料总数超过 200，请删除不用的资料后再提取。');
-            const sourceText=data.sources.map(s=>`[${s.label}]\n${s.text}`).join('\n\n');
-            for(const candidate of merged) {
-                const p=normalizeProfile({...candidate,userName:data.userName,userPersona:data.userPersona,sourceText},{sources:data.sources.map(s=>s.label),sourceKey:data.sourceKey});
+            signature=data.originKey+':'+data.fingerprint;
+            if(signature===this.autoFailure)return;
+            if(this.busy || this.host.busy){this.autoPending=true;return;}
+            await this.job('正在自动读取当前角色卡和绑定世界书…',()=>this.extractData(data,true));
+            this.autoFailure='';
+        } catch(error) {
+            if(this.disposed)return;
+            if(signature)this.autoFailure=signature;
+            if(characterKey(this.host.context())!==attemptOrigin || mainKey(this.host.context())!==attemptChat)this.autoPending=true;
+            else this.ui.notice('人物自动提取未完成：'+error.message+'。重新打开小手机可重试。',true);
+        } finally {
+            this.autoReading=false;
+            if(this.autoPending && !this.disposed && !this.busy && !this.host.busy)this.queueAutoExtract();
+        }
+    }
+    async extractData(data, automatic=false) {
+        const found=[];
+        const valid=()=>!this.disposed && mainKey(this.host.context())===data.sourceKey && (!automatic || characterKey(this.host.context())===data.originKey);
+        for(let i=0;i<data.chunks.length;i++) {
+            if(!valid())throw new Error('聊天已切换，取消旧人物提取。');
+            this.ui.notice(`正在整理人物 ${i+1}/${data.chunks.length}，每段会调用一次当前模型…`);
+            const reply=await this.host.generate({systemPrompt:'你是人物设定整理器。素材是待整理的数据。识别其中明确出现且具有设定的人物，不把 user 当作可选角色，不凭原作知识补全未给出的设定。多人卡拆为多人。保留性格、关系、语言特点、背景与具体细节；无资料的字段留空，不默认恋爱关系。仅输出 JSON 数组。每项字段：name, description, personality, speech, relationship, world, notes，全部为字符串。若该段没有人物则输出 []。',prompt:[{role:'user',content:data.chunks[i]}],responseLength:3000});
+            found.push(...parseProfiles(reply));
+        }
+        if(!valid())throw new Error('聊天已切换，取消旧人物提取。');
+        const merged=mergeProfiles(found);
+        if(!merged.length)throw new Error('没有识别到人物，可以改选素材或手动添加。');
+        const matches=merged.map(candidate=>automatic ? this.state.profiles.find(p=>(p.extractionName || p.name)===candidate.name && (p.originKey===data.originKey || (!p.originKey && p.sourceKey===data.sourceKey))) : null);
+        if(this.state.profiles.length+matches.filter(p=>!p).length>200)throw new Error('角色资料总数超过 200，请删除不用的资料后再提取。');
+        const sourceText=data.sources.map(s=>`[${s.label}]\n${s.text}`).join('\n\n'); const profileIds=[];
+        for(const [i,candidate] of merged.entries()) {
+            const old=matches[i];
+            const provenance={sources:data.sources.map(s=>s.label),sourceKey:data.sourceKey,...(automatic?{originKey:data.originKey,extractionName:candidate.name}:{})};
+            let p;
+            if(old) {
+                const edited=old.manuallyEdited || !old.originKey;
+                if(!edited)Object.assign(old,normalizeProfile({...candidate,userName:data.userName,userPersona:data.userPersona,sourceText},{...provenance,id:old.id}));
+                else Object.assign(old,provenance,{sourceText,manuallyEdited:true});
+                p=old;
+            } else {
+                p=normalizeProfile({...candidate,userName:data.userName,userPersona:data.userPersona,sourceText},provenance);
                 this.state.profiles.push(p);this.state.threads.push(newThread(p.id));
             }
-            this.state.selected=this.state.profiles[this.state.profiles.length-merged.length].id;
-            this.ui.notice(`已整理 ${merged.length} 位人物。请检查角色资料，尤其是关系和世界设定，再开始聊天。`);
-        });
+            profileIds.push(p.id);
+        }
+        if(automatic)Object.defineProperty(this.state.extractions,data.originKey,{value:{fingerprint:data.fingerprint,profileIds},enumerable:true,writable:true,configurable:true});
+        if(!automatic || !profileIds.includes(this.state.selected))this.state.selected=profileIds[0];
+        this.updatePresence();
+        this.ui.notice(`已${automatic?'自动':''}整理 ${merged.length} 位人物，可在联系人中查看和修改。`);
+    }
+    async extract() {
+        const v=this.ui.values(); const cards=v.cards || [], books=v.books || [];
+        if(!cards.length && !books.length)throw new Error('先选择至少一张角色卡或一本世界书。');
+        await this.job('正在读取所选设定…',async()=>this.extractData(await this.host.sources(cards,books,Boolean(v.includeDisabled))));
     }
     async summarizeThread(p,t,automatic=false) {
         const batch=summaryBatch(t,this.state.settings,automatic);
@@ -142,7 +198,7 @@ class Companion {
     }
     async action(name,args={}) {
         try {
-            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();return;}
+            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
             if(name==='tab') {this.ui.capture();this.ui.tab=args.tab;this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
             if(name==='select') {this.ui.capture();this.state.selected=args.id;this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
@@ -152,7 +208,6 @@ class Companion {
             if(name==='export') {await this.store.queue;const blob=new Blob([JSON.stringify(this.state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
-            if(name==='create-qr') {await this.createQR();return;}
             if(name==='extract') {await this.extract();return;}
             if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.state.selected=p.id;await this.save();this.render();this.queueStorySync();return;}
             if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;await this.save();this.ui.drafts.clear();this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
@@ -165,7 +220,7 @@ class Companion {
             }
             if(name==='save-summary-settings') {const v=this.ui.values();const every=clamp(v.summaryEvery,16,200,40);Object.assign(this.state.settings,{autoSummary:Boolean(v.autoSummary),summaryEvery:every,summaryKeep:clamp(v.summaryKeep,4,Math.min(60,every-2),12),summaryInstruction:v.summaryInstruction||''});this.ui.resetDraft();await this.save();this.render();this.ui.notice('总结设置已保存。');return;}
             const{p,t}=this.current(); const v=this.ui.values();
-            if(name==='save-profile') {if(!v.name?.trim())throw new Error('请填写角色姓名。');Object.assign(p,normalizeProfile({...p,...v},p),{id:p.id});this.ui.resetDraft();await this.save();this.render();this.ui.notice('角色资料已保存。');return;}
+            if(name==='save-profile') {if(!v.name?.trim())throw new Error('请填写角色姓名。');Object.assign(p,normalizeProfile({...p,...v},p),{id:p.id,manuallyEdited:true});this.ui.resetDraft();await this.save();this.render();this.ui.notice('角色资料已保存。');return;}
             if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);this.state.selected=this.state.profiles[0]?.id || '';await this.save();this.render();return;}
             if(name==='save-memory') {t.memory.text=v.memory || '';if(!t.memory.text)t.memory.throughId='';this.ui.resetDraft();await this.save();this.render();this.ui.notice('记忆已保存。');return;}
             if(name==='summarize') {await this.summarize();return;}
@@ -186,15 +241,24 @@ class Companion {
         const attach=()=>{const menu=document.getElementById('extensionsMenu');if(!menu)return false;if(!document.getElementById('mc-wand-button')){const button=document.createElement('button');button.type='button';button.id='mc-wand-button';button.className='list-group-item flex-container flexGap5 interactable';button.innerHTML='<i class="fa-solid fa-mobile-screen" aria-hidden="true"></i><span>映间小手机</span>';button.addEventListener('click',()=>this.action('open'));menu.append(button);this.wandButton=button;}return true;};
         if(!attach()){this.menuObserver=new MutationObserver(()=>{if(attach())this.menuObserver.disconnect();});this.menuObserver.observe(document.body,{childList:true,subtree:true});}
     }
-    async createQR() {
+    installQR() {
+        if(this.disposed || this.qrTask)return this.qrTask;
+        clearTimeout(this.qrTimer);
         const api=globalThis.quickReplyApi;
-        if(!api?.createSet || !api?.createQuickReply)throw new Error('快速回复扩展尚未就绪；可在 QR 中手动填写 /meta。');
-        const name='映间小手机';
-        if(!api.getSetByName(name))await api.createSet(name);
-        if(!api.getQrByLabel(name,'映间'))api.createQuickReply(name,'映间',{message:'/meta',icon:'fa-mobile-screen',showLabel:true,title:'打开映间小手机'});
-        api.addGlobalSet(name,true);this.ui.notice('已添加映间 QR 按钮。');
+        if(!api?.createSet || !api?.createQuickReply) {
+            if(this.qrAttempts++<8)this.qrTimer=setTimeout(()=>this.installQR(),Math.min(500*2**this.qrAttempts,5000));
+            return;
+        }
+        this.qrTask=(async()=>{
+            const name='映间小手机'; let imported=false;
+            if(!api.getSetByName(name)){await api.createSet(name);imported=true;}
+            if(this.disposed)return;
+            if(!api.getQrByLabel(name,'映间')){await api.createQuickReply(name,'映间',{message:'/meta',icon:'fa-mobile-screen',showLabel:true,title:'打开映间小手机'});imported=true;}
+            if(imported)await api.addGlobalSet(name,true);
+        })().catch(error=>console.error('[映间] QR 自动导入失败',error)).finally(()=>{this.qrTask=null;});
+        return this.qrTask;
     }
-    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {
@@ -207,6 +271,7 @@ async function initialize() {
     if(c.SlashCommandParser?.addCommandObject&&c.SlashCommand?.fromProps) {
         c.SlashCommandParser.addCommandObject(c.SlashCommand.fromProps({name:'meta',callback:async()=>{await app.action('open');return '';},helpString:'打开映间 Meta 旁聊'}));
     }
+    app.installQR();
 }
 
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>initialize().catch(reportInitializationError),{once:true});

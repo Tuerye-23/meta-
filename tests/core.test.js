@@ -69,3 +69,9 @@ test('proactive messages respect visibility, interval, selection, cap and main g
     for(const change of [{visible:false},{open:false},{busy:true},{hostBusy:true},{selected:'b'}]) assert.equal(canNudge(s,101,{...options,...change}),false);
     assert.equal(canNudge({...s,count:3},101,options),false);assert.equal(canNudge(s,99,options),false);
 });
+
+test('automatic extraction identity and cache survive chat changes and backup migration',async()=>{
+    const {characterKey,sourceFingerprint}=await import('../core.js');const c={characterId:0,characters:[{avatar:'A.png'}],chatId:'one'};const origin=characterKey(c);c.chatId='two';assert.equal(characterKey(c),origin);c.characters[0].avatar='B.png';assert.notEqual(characterKey(c),origin);
+    assert.notEqual(sourceFingerprint([{text:'原设定'}]),sourceFingerprint([{text:'新设定'}]));
+    const state=freshState();const p=normalizeProfile({name:'A'},{originKey:origin,extractionName:'A',manuallyEdited:true});state.profiles.push(p);state.threads.push(newThread(p.id));state.extractions[origin]={fingerprint:'123',profileIds:[p.id]};const restored=validateBackup(JSON.parse(JSON.stringify(state)));assert.deepEqual(restored.extractions,state.extractions);assert.equal(restored.profiles[0].manuallyEdited,true);
+});

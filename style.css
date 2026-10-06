@@ -101,3 +101,9 @@
 @media(max-width:600px) { #mc-root .mc-panel { top:max(5px,var(--tt-inset-top,env(safe-area-inset-top,0px))); bottom:max(5px,var(--tt-inset-bottom,env(safe-area-inset-bottom,0px))); right:max(5px,var(--tt-inset-right,env(safe-area-inset-right,0px))); left:max(5px,var(--tt-inset-left,env(safe-area-inset-left,0px))); width:auto; max-height:none; border-width:4px; border-radius:29px; } #mc-root textarea,#mc-root input,#mc-root select { font-size:16px; } #mc-root .mc-top { padding:12px 16px; } #mc-root .mc-scroll { padding:15px; } }
 @media(max-height:550px) { #mc-root .mc-header { height:29px; padding-top:0; } #mc-root .mc-top { padding-block:6px; } #mc-root .mc-nav { padding-block:2px; } #mc-root .mc-home-bar { margin-block:3px; } #mc-root .mc-compose textarea { min-height:42px; height:42px; } }
 @media(pointer:coarse) { #mc-root button { min-height:44px; } #mc-root .mc-message header button { min-height:28px; min-width:28px; } #mc-root .mc-header button { min-height:36px; } }
+
+@media (min-width:601px) {
+    #mc-root .mc-header { cursor:grab; user-select:none; touch-action:none; }
+    #mc-root .mc-dragging .mc-header { cursor:grabbing; }
+    #mc-root .mc-header button { cursor:pointer; }
+}
