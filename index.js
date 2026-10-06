@@ -1,15 +1,19 @@
-import { addMessage, buildPrompt, canNudge, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, uid, validateBackup } from './core.js';
+import { addMessage, buildPrompt, canNudge, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
 import { createHost, StateStore } from './host.js';
 import { Interface } from './ui.js';
 
 class Companion {
     constructor(host, store, state) {
-        this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null;
+        this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null; this.syncTimer=null; this.storyRevision=0; this.disposed=false;
         this.ui = new Interface(host, (name, args) => this.action(name, args));
-        this.unlisten = host.initEvents(() => { if (this.ui.open) this.render(); });
+        this.unlisten = host.initEvents(name => {
+            if(name==='CHAT_CHANGED') {this.storyRevision++; for(const t of this.state.threads)t.story=null;}
+            if(name!=='GENERATION_STARTED') this.queueStorySync();
+            if (this.ui.open) this.render();
+        });
         this.visibility = () => { this.updatePresence(); };
         document.addEventListener('visibilitychange', this.visibility);
-        this.bindSettingsButton(); this.render();
+        this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync();
     }
     current(id = this.state.selected) {
         const p = this.state.profiles.find(p => p.id === id);
@@ -24,7 +28,7 @@ class Companion {
         if (this.busy) throw new Error('上一项任务仍在进行，请稍等。');
         this.busy = true; this.ui.notice(title); this.render();
         try { const result = await fn(); await this.save(); return result; }
-        finally { this.busy = false; this.render(); }
+        finally { this.busy = false; this.render(); this.queueStorySync(); }
     }
     elapsed(session = this.session) { return session ? session.elapsed + (session.runningSince ? Date.now() - session.runningSince : 0) : 0; }
     updatePresence() {
@@ -52,12 +56,25 @@ class Companion {
             if (this.session===s) this.schedule();
         }, Math.max(1000,s.nextAt-Date.now()));
     }
-    async refreshStory(p, t, cutoff = null, explicit = false) {
+    queueStorySync() {
+        clearTimeout(this.syncTimer);
+        if(this.disposed)return;
+        this.syncTimer=setTimeout(()=>this.syncCurrentStory().catch(error=>{if(this.ui.open)this.ui.notice(error.message,true);}),300);
+    }
+    async syncCurrentStory() {
+        if(this.disposed || !this.state.selected)return;
+        if(this.busy || this.host.busy)return;
+        const {p,t}=this.current();
+        await this.refreshStory(p,t); await this.save(); if(this.ui.open)this.render();
+    }
+    async refreshStory(p, t) {
         const key = mainKey(this.host.context());
-        if (!explicit && (!this.state.settings.includeStory || t.story?.frozen || !key || p.sourceKey !== key)) return;
-        const story = await this.host.story(this.state.settings,cutoff);
-        if (!explicit && mainKey(this.host.context()) !== key) throw new Error('读取期间主线已切换，请重试。');
-        story.frozen = cutoff !== null; t.story = story; if (explicit) p.sourceKey = story.key;
+        if (!this.state.settings.includeStory || !key || !this.host.context().chat?.length) {t.story=null;return;}
+        const revision=++this.storyRevision;
+        const story = await this.host.story(this.state.settings);
+        if (mainKey(this.host.context()) !== key) throw new Error('读取期间主线已切换，请重试。');
+        if(this.disposed || revision!==this.storyRevision)return;
+        t.story = story; p.sourceKey = story.key;
     }
     request(p, t, kind='chat', quote='') {
         const session=this.session?.profileId===p.id?this.session:null;
@@ -76,6 +93,9 @@ class Companion {
             if (kind==='annotation') t.annotations.push({quote,reply,label:t.story?.label || '',createdAt:Date.now()});
             else addMessage(t,'assistant',reply,kind);
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');
+            if(kind!=='annotation' && this.state.settings.autoSummary && summaryBatch(t,this.state.settings,true).length) {
+                try {await this.summarizeThread(p,t,true);} catch(error) {this.ui.notice('回复已收到；自动总结未完成：'+error.message,true);}
+            }
         });
     }
     async extract() {
@@ -100,38 +120,56 @@ class Companion {
             this.ui.notice(`已整理 ${merged.length} 位人物。请检查角色资料，尤其是关系和世界设定，再开始聊天。`);
         });
     }
+    async summarizeThread(p,t,automatic=false) {
+        const batch=summaryBatch(t,this.state.settings,automatic);
+        if(!batch.length) {if(automatic)return;throw new Error('较早聊天还不够，近期原文会保留。');}
+        const marker=batch.at(-1).id;
+        const instruction=this.state.settings.summaryInstruction?.trim() || '整理这两人在独立 meta 空间中的聊天记忆。保留明确事实、关系变化、称呼与偏好、承诺、未完事项和重要原话。观察到的平行世界经历必须注明归属，不作为他们亲身经历。不捏造事实，不替用户确定感情。合并旧记忆，按时间简洁记录，不超过 1800 个中文字符。';
+        this.ui.notice(automatic?'正在自动整理聊天记忆…':'正在整理你们自己的聊天记忆…');
+        const result=await this.host.generate({systemPrompt:instruction,prompt:[{role:'user',content:`角色：${p.name}\n旧记忆：${t.memory.text}\n新增记录：\n${batch.map(m=>`[${m.role}] ${m.text}`).join('\n\n')}`}],responseLength:2200});
+        t.memory={text:result,throughId:marker};
+        if(this.state.selected===p.id && this.ui.tab==='settings')this.ui.resetDraft();
+        this.ui.notice('记忆已更新，完整聊天记录仍保留。');
+    }
     async summarize() {
         const {p,t}=this.current();
-        const through=t.messages.findIndex(m=>m.id===t.memory.throughId);
-        const end=t.messages.length-12;
-        if(end<=through+1) throw new Error('暂时没有需要整理的较早聊天，至少保留最近 12 条。');
-        const batch=t.messages.slice(through+1,end); const marker=batch[batch.length-1].id;
-        await this.job('正在整理你们自己的聊天记忆…',async()=>{
-            const result=await this.host.generate({systemPrompt:'整理这两人在独立 meta 空间中的聊天记忆。保留明确事实、关系变化、称呼与偏好、承诺、未完事项和重要原话。观察到的平行世界经历必须注明归属，不作为他们亲身经历。不捏造事实，不替用户确定感情。合并旧记忆，按时间简洁记录，不超过 1800 个中文字符。',prompt:[{role:'user',content:`角色：${p.name}\n旧记忆：${t.memory.text}\n新增记录：\n${batch.map(m=>`[${m.role}] ${m.text}`).join('\n\n')}`}],responseLength:2200});
-            t.memory={text:result,throughId:marker};this.ui.resetDraft();this.ui.notice('记忆已更新，完整聊天记录仍保留。');
-        });
+        await this.job('正在整理你们自己的聊天记忆…',()=>this.summarizeThread(p,t));
+    }
+    async loadStoryControls(book=this.state.settings.memoryBook) {
+        try {this.ui.regexes=await this.host.enabledRegexes();this.ui.regexError='';} catch(error){this.ui.regexError=error.message;}
+        this.ui.entries=book ? await this.host.memoryEntries(book) : []; this.ui.entryBook=book;
+        this.render();
     }
     async action(name,args={}) {
         try {
-            if(name==='open') {this.ui.show();this.render();this.updatePresence();return;}
+            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
-            if(name==='tab') {this.ui.capture();this.ui.tab=args.tab;this.render();return;}
-            if(name==='select') {this.ui.capture();this.state.selected=args.id;this.render();this.updatePresence();await this.save();return;}
+            if(name==='tab') {this.ui.capture();this.ui.tab=args.tab;this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
+            if(name==='select') {this.ui.capture();this.state.selected=args.id;this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
+            if(name==='refresh-regex') {await this.loadStoryControls(this.ui.values().memoryBook);this.ui.notice('已同步当前启用的正则，选择正文项目后保存。');return;}
+            if(name==='memory-book') {this.ui.capture();this.ui.entries=await this.host.memoryEntries(args.book);this.ui.entryBook=args.book;const d=this.ui.drafts.get(this.ui.previous);if(d)d.memoryEntry='';this.render();return;}
             if(name==='preview') {const{p,t}=this.current();if(!this.busy)await this.refreshStory(p,t);const temporary={...t,messages:[...t.messages]};const draft=this.ui.values().draft?.trim();if(draft)addMessage(temporary,'user',draft);this.ui.preview(this.request(p,temporary));return;}
             if(name==='export') {await this.store.queue;const blob=new Blob([JSON.stringify(this.state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
+            if(name==='create-qr') {await this.createQR();return;}
             if(name==='extract') {await this.extract();return;}
-            if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.state.selected=p.id;await this.save();this.render();return;}
+            if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.state.selected=p.id;await this.save();this.render();this.queueStorySync();return;}
             if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;await this.save();this.ui.drafts.clear();this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
-            if(name==='save-settings') {const v=this.ui.values();const s=this.state.settings;Object.assign(s,{includeStory:Boolean(v.includeStory),recentFloors:clamp(v.recentFloors,1,60,12),storyLimit:clamp(v.storyLimit,1000,60000,12000),replyTokens:clamp(v.replyTokens,128,4096,800),historyMessages:clamp(v.historyMessages,4,200,40),customInstruction:v.customInstruction || ''});this.ui.resetDraft();await this.save();this.render();this.ui.notice('设置已保存。');return;}
+            if(name==='save-settings') {const v=this.ui.values();const s=this.state.settings;Object.assign(s,{includeStory:Boolean(v.includeStory),recentFloors:clamp(v.recentFloors,1,60,12),storyLimit:clamp(v.storyLimit,1000,60000,12000),replyTokens:clamp(v.replyTokens,128,4096,800),historyMessages:clamp(v.historyMessages,4,200,40),customInstruction:v.customInstruction || ''});this.ui.resetDraft();await this.save();this.render();this.queueStorySync();this.ui.notice('设置已保存。');return;}
+            if(name==='save-story-settings') {
+                const v=this.ui.values();tagNames(v.includeTags);tagNames(v.excludeTags);
+                if(v.storyMemorySource==='worldbook' && (!v.memoryBook||!v.memoryEntry))throw new Error('请选择世界书及记忆条目。');
+                Object.assign(this.state.settings,{includeTags:v.includeTags||'',excludeTags:v.excludeTags||'',regexIds:v.regexIds||[],regexCapture:clamp(v.regexCapture,0,20,1),storyMemorySource:v.storyMemorySource==='worldbook'?'worldbook':'baibai',memoryBook:v.memoryBook||'',memoryEntry:v.memoryEntry||''});
+                this.ui.resetDraft();await this.save();await this.syncCurrentStory();this.render();this.ui.notice('读取设置已保存，主线会自动跟随最新内容。');return;
+            }
+            if(name==='save-summary-settings') {const v=this.ui.values();const every=clamp(v.summaryEvery,16,200,40);Object.assign(this.state.settings,{autoSummary:Boolean(v.autoSummary),summaryEvery:every,summaryKeep:clamp(v.summaryKeep,4,Math.min(60,every-2),12),summaryInstruction:v.summaryInstruction||''});this.ui.resetDraft();await this.save();this.render();this.ui.notice('总结设置已保存。');return;}
             const{p,t}=this.current(); const v=this.ui.values();
             if(name==='save-profile') {if(!v.name?.trim())throw new Error('请填写角色姓名。');Object.assign(p,normalizeProfile({...p,...v},p),{id:p.id});this.ui.resetDraft();await this.save();this.render();this.ui.notice('角色资料已保存。');return;}
             if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);this.state.selected=this.state.profiles[0]?.id || '';await this.save();this.render();return;}
             if(name==='save-memory') {t.memory.text=v.memory || '';if(!t.memory.text)t.memory.throughId='';this.ui.resetDraft();await this.save();this.render();this.ui.notice('记忆已保存。');return;}
             if(name==='summarize') {await this.summarize();return;}
             if(name==='delete-message') {if(!confirm('删除这条 meta 消息？涉及已整理内容时会清空对应摘要，之后可重新整理。'))return;removeMessage(t,args.id);await this.save();this.render();return;}
-            if(name==='sync-story'||name==='freeze-story') {await this.job('正在读取当前主线…',async()=>{await this.refreshStory(p,t,name==='freeze-story'?Number(v.cutoff)-1:null,true);this.ui.resetDraft();this.ui.notice(name==='freeze-story'?'观看进度已固定。':'已同步最新剧情。');});return;}
             if(name==='annotate') {const floor=t.story?.floors.find(f=>f.index===Number(args.index));if(!floor)throw new Error('这段正文已不在当前观看记录中。');await this.reply('annotation',floor.body);return;}
             if(name==='send') {if(!v.draft?.trim())return;await this.reply('chat','',null,v.draft.trim());return;}
             if(name==='retry') {if(!t.messages.length)throw new Error('先发一条消息。');await this.reply('chat','',null,null,true);return;}
@@ -144,7 +182,19 @@ class Companion {
         const target=document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
         if(!target)return;const wrap=document.createElement('div');wrap.className='extension_container';wrap.id='mc-extension-settings';const button=document.createElement('button');button.type='button';button.className='menu_button';button.textContent='映间 · 打开 Meta 旁聊';button.addEventListener('click',()=>this.action('open'));wrap.append(button);target.append(wrap);this.settingsButton=wrap;
     }
-    destroy() {clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.ui.destroy();this.settingsButton?.remove();}
+    bindWandButton() {
+        const attach=()=>{const menu=document.getElementById('extensionsMenu');if(!menu)return false;if(!document.getElementById('mc-wand-button')){const button=document.createElement('button');button.type='button';button.id='mc-wand-button';button.className='list-group-item flex-container flexGap5 interactable';button.innerHTML='<i class="fa-solid fa-mobile-screen" aria-hidden="true"></i><span>映间小手机</span>';button.addEventListener('click',()=>this.action('open'));menu.append(button);this.wandButton=button;}return true;};
+        if(!attach()){this.menuObserver=new MutationObserver(()=>{if(attach())this.menuObserver.disconnect();});this.menuObserver.observe(document.body,{childList:true,subtree:true});}
+    }
+    async createQR() {
+        const api=globalThis.quickReplyApi;
+        if(!api?.createSet || !api?.createQuickReply)throw new Error('快速回复扩展尚未就绪；可在 QR 中手动填写 /meta。');
+        const name='映间小手机';
+        if(!api.getSetByName(name))await api.createSet(name);
+        if(!api.getQrByLabel(name,'映间'))api.createQuickReply(name,'映间',{message:'/meta',icon:'fa-mobile-screen',showLabel:true,title:'打开映间小手机'});
+        api.addGlobalSet(name,true);this.ui.notice('已添加映间 QR 按钮。');
+    }
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {
@@ -152,7 +202,7 @@ async function initialize() {
     if(document.getElementById('mc-root'))return;
     const host=createHost();const store=new StateStore(host);const state=await store.init();
     const app=new Companion(host,store,state);
-    globalThis.STMetaCompanion={version:'0.1.0',open:()=>app.action('open'),destroy:()=>app.destroy()};
+    globalThis.STMetaCompanion={version:VERSION,open:()=>app.action('open'),destroy:()=>app.destroy()};
     const c=host.context();
     if(c.SlashCommandParser?.addCommandObject&&c.SlashCommand?.fromProps) {
         c.SlashCommandParser.addCommandObject(c.SlashCommand.fromProps({name:'meta',callback:async()=>{await app.action('open');return '';},helpString:'打开映间 Meta 旁聊'}));

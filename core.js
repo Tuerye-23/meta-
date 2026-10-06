@@ -1,4 +1,4 @@
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -7,6 +7,9 @@ export function freshState() {
     return { schema: 1, version: VERSION, profiles: [], threads: [], selected: '', settings: {
         includeStory: true, recentFloors: 12, storyLimit: 12000, replyTokens: 800, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
+        includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
+        storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
+        autoSummary: false, summaryEvery: 40, summaryKeep: 12, summaryInstruction: '',
     } };
 }
 
@@ -44,7 +47,7 @@ export function validateBackup(input) {
         if (new Set(messages.map(m => m.id)).size !== messages.length) throw new Error('备份中有重复消息 ID。');
         const story = t.story && typeof t.story.text === 'string' ? {
             key: text(t.story.key), label: text(t.story.label), text: t.story.text.slice(0, 200000),
-            cutoff: Number(t.story.cutoff), capturedAt: Number(t.story.capturedAt) || 0, frozen: t.story.frozen === true,
+            cutoff: Number(t.story.cutoff), capturedAt: Number(t.story.capturedAt) || 0, frozen: false,
             floors: Array.isArray(t.story.floors) ? t.story.floors.filter(f => Number.isInteger(f.index) && typeof f.body === 'string').map(f => ({ index: f.index, name: text(f.name), body: f.body })) : [],
         } : null;
         out.threads.push({ id: t.id, profileId: t.profileId, messages, story,
@@ -60,8 +63,76 @@ export function validateBackup(input) {
         replyTokens: clamp(s.replyTokens, 128, 4096, 800), historyMessages: clamp(s.historyMessages, 4, 200, 40),
         intervalMinutes: clamp(s.intervalMinutes, 2, 120, 10), maxProactive: clamp(s.maxProactive, 1, 20, 3),
         activity: text(s.activity) || '待一会儿', customInstruction: text(s.customInstruction),
+        includeTags: text(s.includeTags), excludeTags: text(s.excludeTags),
+        regexIds: Array.isArray(s.regexIds) ? [...new Set(s.regexIds.filter(x => typeof x === 'string'))].slice(0,100) : [],
+        regexCapture: clamp(s.regexCapture,0,20,1),
+        storyMemorySource: s.storyMemorySource === 'worldbook' ? 'worldbook' : 'baibai',
+        memoryBook: text(s.memoryBook), memoryEntry: text(s.memoryEntry),
+        autoSummary: s.autoSummary === true, summaryEvery: clamp(s.summaryEvery,16,200,40),
+        summaryKeep: clamp(s.summaryKeep,4,Math.min(60,clamp(s.summaryEvery,16,200,40)-2),12),
+        summaryInstruction: text(s.summaryInstruction),
     };
     return out;
+}
+
+export function tagNames(value) {
+    return [...new Set(text(value).split(/[\s,，;；]+/).map(x=>x.replace(/^<\/?|>$/g,'')).filter(Boolean))].map(name=>{
+        if(!/^[\p{L}\p{N}_:.-]+$/u.test(name)) throw new Error(`标签名称无效：${name}`);
+        return name;
+    });
+}
+const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function tagRanges(body,name) {
+    const pattern=new RegExp(`<(/?)${escapeRegex(name)}(?=[\\s/>])[^>]*>`,'giu');
+    const ranges=[];let depth=0,start=0,content=0;
+    for(const m of body.matchAll(pattern)) {
+        if(!m[1]) {
+            if(depth===0){start=m.index;content=m.index+m[0].length;}
+            if(/\/\s*>$/.test(m[0])){if(depth===0)ranges.push({start,end:content,text:''});}
+            else depth++;
+        } else if(depth>0 && --depth===0) ranges.push({start,end:m.index+m[0].length,text:body.slice(content,m.index)});
+    }
+    if(depth>0)ranges.push({start,end:body.length,text:body.slice(content)});
+    return ranges;
+}
+export function filterStory(body, settings) {
+    let result=text(body);
+    // Remove excluded material before extraction, including unfinished reasoning blocks.
+    for(const name of [...new Set(['think','thinking','analysis','script','style',...tagNames(settings.excludeTags)])]) for(const range of tagRanges(result,name).reverse())result=result.slice(0,range.start)+result.slice(range.end);
+    const include=tagNames(settings.includeTags);
+    if(include.length) {
+        const blocks=[];
+        for(const name of include) for(const range of tagRanges(result,name)) blocks.push({at:range.start,text:range.text});
+        result=blocks.sort((a,b)=>a.at-b.at).map(x=>x.text).join('\n\n');
+    }
+    return result.trim();
+}
+
+export function regexForStory(value) {
+    const source=text(value); const literal=source.match(/^\/([\s\S]*)\/([a-z]*)$/i);
+    const flags=literal ? literal[2] : '';
+    return new RegExp(literal ? literal[1] : source,[...new Set(flags.replace(/y/g,'')+'g')].join(''));
+}
+
+export function extractRegexStory(body, scripts, capture=1) {
+    const blocks=[];
+    for(const script of scripts) {
+        let regex;
+        try { regex=regexForStory(script.findRegex); } catch { throw new Error(`正则“${script.scriptName || script.id}”无法解析，请检查正则设置。`); }
+        for(const match of text(body).matchAll(regex)) {
+            const value=match[Number(capture)];
+            if(value===undefined) throw new Error(`正则“${script.scriptName || script.id}”没有第 ${capture} 个捕获组，可改选 0（完整匹配）。`);
+            if(value.trim()) blocks.push({at:match.index,text:value});
+        }
+    }
+    return blocks.sort((a,b)=>a.at-b.at).filter((v,i,a)=>!a.slice(0,i).some(x=>x.at===v.at&&x.text===v.text)).map(x=>x.text).join('\n\n').trim();
+}
+
+export function summaryBatch(thread, settings, automatic=false) {
+    const through=thread.messages.findIndex(m=>m.id===thread.memory?.throughId);
+    const pending=thread.messages.slice(through+1);
+    if(automatic && pending.length < settings.summaryEvery) return [];
+    return pending.slice(0,Math.max(0,pending.length-settings.summaryKeep));
 }
 
 export function parseProfiles(raw) {

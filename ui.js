@@ -6,23 +6,22 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.host = host; this.action = action; this.tab = 'chat'; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null;
+        this.host = host; this.action = action; this.tab = 'chat'; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError='';
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
-          <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间 Meta 旁聊" data-tt-mobile-surface="fullscreen-window">
-            <header class="mc-header"><div><strong>映间</strong><small>另一个世界之外</small></div><span class="mc-version">v${VERSION}</span><button type="button" data-action="close" aria-label="关闭映间">×</button></header>
-            <div class="mc-top"><label>和谁聊天 <select id="mc-profile" aria-label="选择 meta 角色"></select></label><span id="mc-status"></span></div>
-            <nav class="mc-nav" aria-label="映间功能">${[['chat','聊天'],['roles','角色'],['story','剧情'],['company','陪伴'],['settings','设置']].map(([id,label]) => `<button type="button" data-action="tab" data-tab="${id}">${label}</button>`).join('')}</nav>
+          <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
+            <header class="mc-header"><strong>映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机">×</button></header>
+            <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
+            <nav class="mc-nav" aria-label="映间功能">${[['chat','消息','fa-comment-dots'],['roles','联系人','fa-user-group'],['story','共看','fa-clapperboard'],['company','陪伴','fa-moon'],['settings','设置','fa-sliders']].map(([id,label,icon]) => `<button type="button" data-action="tab" data-tab="${id}"><i class="fa-solid ${icon}" aria-hidden="true"></i><span>${label}</span></button>`).join('')}</nav><div class="mc-home-bar" aria-hidden="true"></div>
           </section>`;
         document.body.append(root); this.root = root; this.content = root.querySelector('#mc-content');
-        const launcher = document.createElement('button'); launcher.type = 'button'; launcher.id = 'mc-launcher'; launcher.textContent = '映'; launcher.title = '打开映间 · Meta 旁聊'; launcher.setAttribute('aria-label', launcher.title); launcher.setAttribute('data-tt-mobile-surface', 'free-window');
-        document.body.append(launcher); launcher.addEventListener('click', () => action('open')); this.launcher = launcher;
         root.addEventListener('click', event => {
             const button = event.target.closest('[data-action]'); if (!button || button.disabled) return;
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
+        root.addEventListener('change', event => {if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
             if (!this.open) return;
@@ -56,12 +55,13 @@ export class Interface {
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;
-        this.root.querySelector('#mc-status').textContent = busy ? '正在联系…' : this.host.bbsStatus();
+        this.root.querySelector('#mc-status').textContent = busy ? '对方正在输入…' : state.settings.includeStory ? '与你共看另一个世界' : '只聊属于你们的事';
+        this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
         const c = this.host.context(); const s = state.settings;
         const disabled = busy ? 'disabled' : '';
         if (this.tab === 'chat') this.content.innerHTML = p ? `
-            <div class="mc-chat-meta">${s.includeStory ? esc(t?.story?.label || '可读取主线，也可以直接聊') : '独立 meta 聊天 · 未携带主线剧情'}<button type="button" data-action="preview">发送预览</button></div>
+            <div class="mc-chat-meta"><span>${s.includeStory ? '主线自动同步 · '+esc(t?.story?.label || '等待正文') : '独立 Meta 对话'}</span><button type="button" data-action="preview" aria-label="查看本次发送内容">发送预览</button></div>
             <div class="mc-messages" aria-live="polite">${(t?.messages || []).slice(-200).map(m => `<article class="mc-message mc-${m.role}"><header><strong>${esc(m.role === 'user' ? p.userName || '你' : m.role === 'note' ? '记录' : p.name)}</strong><small>${esc(m.kind === 'proactive' ? '主动消息' : m.kind === 'theatre' ? '小剧场' : '')} ${new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><button type="button" data-action="delete-message" data-id="${esc(m.id)}" aria-label="删除这条消息">×</button></header><div>${esc(m.text)}</div></article>`).join('') || `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>和 ${esc(p.name)} 聊几句</strong><p>可以一起看故事，也可以从今天过得怎么样聊起。<br>关系沿用角色设定。</p></div>`}</div>
             <form class="mc-compose"><textarea id="mc-draft" name="draft" rows="3" placeholder="想和 ${esc(p.name)} 说什么？" aria-label="消息内容"></textarea><div><small>Ctrl / ⌘ + Enter 发送</small><button type="button" data-action="retry" ${disabled}>重试回复</button><button type="button" class="mc-primary" data-action="send" ${disabled}>发送</button></div></form>` : `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>先认识一个人</strong><p>选择角色卡、世界书，或者手动写一份角色资料。</p><button type="button" class="mc-primary" data-action="tab" data-tab="roles">添加角色</button></div>`;
         if (this.tab === 'roles') {
@@ -75,10 +75,18 @@ export class Interface {
               ${field('身份与外貌','description',p.description)}${field('性格','personality',p.personality)}${field('说话习惯 / 示例','speech',p.speech)}${field('原设定里的关系','relationship',p.relationship)}${field('世界设定','world',p.world)}${field('你的设定','userPersona',p.userPersona)}${field('Meta 补充设定','notes',p.notes)}
               <p class="mc-muted">来源：${esc(p.sources?.join('；') || '手动资料')}</p><button type="button" class="mc-primary" data-action="save-profile" ${disabled}>保存角色资料</button></form>${p.sourceText ? `<details><summary>查看提取素材原文</summary><pre>${esc(p.sourceText)}</pre></details>` : ''}` : ''}</div>`;
         }
-        if (this.tab === 'story') this.content.innerHTML = `<div class="mc-scroll"><div class="mc-toolbar"><button type="button" class="mc-primary" data-action="sync-story" ${!p||busy?'disabled':''}>同步当前主线最新剧情</button></div>
-          <p class="mc-muted">${esc(t?.story?.label || '尚未保存观看内容')}。读取的是聊天数据，不依赖正文是否在屏幕上显示。</p>
-          <div class="mc-inline"><label>停在第 <input type="number" name="cutoff" min="1" max="${c.chat?.length || 1}" value="${(t?.story?.cutoff ?? Math.max(0,(c.chat?.length||1)-1))+1}"> 条</label><button type="button" data-action="freeze-story" ${!p||busy?'disabled':''}>读取并固定进度</button></div>
-          <p class="mc-muted">楼层包含用户和角色消息，从 1 开始。固定后，后续正文不会自动读入；点击“同步最新”恢复跟随。</p>
+        if (this.tab === 'story') this.content.innerHTML = `<div class="mc-scroll"><div class="mc-section-title"><span>共同观看</span><small>自动跟随最新正文</small></div><p class="mc-muted">${esc(t?.story?.label || '等待当前主线出现正文')}</p>
+          <details open><summary>正文读取范围</summary><p>只读所选标签，或排除不想读的内容。正文标签和正则筛选作用于角色回复，用户消息保留。</p>
+          ${field('只提取这些标签（留空读取全部）','includeTags',s.includeTags,2)}${field('不读取这些标签','excludeTags',s.excludeTags,2)}
+          <p class="mc-muted">填写标签名即可，例如 正文、状态栏；多个标签用逗号或换行分开。正则和标签同时填写时，先提取正则匹配，再筛选标签。</p>
+          <div class="mc-toolbar"><button type="button" data-action="refresh-regex" ${disabled}>同步已启用正则</button></div>${this.regexError?`<p class="mc-muted">${esc(this.regexError)}</p>`:''}
+          <label class="mc-field"><span>选择正文正则（可多选，不运行替换 HTML）</span><select name="regexIds" multiple size="4">${this.regexes.map(r=>`<option value="${esc(r.id)}" ${(s.regexIds||[]).includes(r.id)?'selected':''}>${esc(r.scriptName||r.id)}</option>`).join('')}${(s.regexIds||[]).filter(id=>!this.regexes.some(r=>r.id===id)).map(id=>`<option value="${esc(id)}" selected>待刷新 / 已停用：${esc(id)}</option>`).join('')}</select></label>
+          ${number('读取捕获组（1 为 $1，0 为完整匹配）','regexCapture',s.regexCapture,0,20)}<p class="mc-muted">不选正则就使用标签设置；正则未匹配的角色回复不读入。</p></details>
+          <details open><summary>正文剧情记忆</summary><label class="mc-field"><span>记忆来源（二选一）</span><select name="storyMemorySource"><option value="baibai" ${s.storyMemorySource!=='worldbook'?'selected':''}>柏宝书接口</option><option value="worldbook" ${s.storyMemorySource==='worldbook'?'selected':''}>世界书指定条目</option></select></label>
+          <label class="mc-field"><span>世界书</span><select name="memoryBook"><option value="">请选择</option>${booksOptions(c,s.memoryBook)}</select></label>
+          <label class="mc-field"><span>记忆条目</span><select name="memoryEntry"><option value="">请选择条目</option>${this.entries.map(e=>`<option value="${esc(e.id)}" ${s.memoryEntry===e.id?'selected':''}>${esc(e.name)}${e.disabled?'（世界书中已关闭）':''}</option>`).join('')}</select></label><p class="mc-muted">世界书模式直接读取所选条目；柏宝书模式读取摘要及状态。最近正文仍会自动更新。</p></details>
+          <button type="button" class="mc-primary" data-action="save-story-settings" ${disabled}>保存读取设置</button>
+          ${(t?.story?.warnings||[]).length?`<p class="mc-muted">${esc(t.story.warnings.join('；'))}</p>`:''}<hr><div class="mc-section-title"><span>正在看的片段</span></div>
           ${(t?.story?.floors || []).map(f => `<article class="mc-floor"><header>第 ${f.index+1} 条 · ${esc(f.name)}<button type="button" data-action="annotate" data-index="${f.index}" ${disabled}>请 ${esc(p?.name)} 批注</button></header><div>${esc(f.body)}</div></article>`).join('')}
           ${t?.story ? `<details><summary>完整读取内容</summary><pre>${esc(t.story.text)}</pre></details>` : ''}
           ${t?.annotations?.length ? `<h3>你们留下的批注</h3>${t.annotations.map(a => `<article class="mc-floor"><blockquote>${esc(a.quote)}</blockquote><div>${esc(a.reply)}</div><small>${esc(a.label)}</small></article>`).join('')}` : ''}</div>`;
@@ -91,8 +99,9 @@ export class Interface {
         if (this.tab === 'settings') this.content.innerHTML = `<div class="mc-scroll"><form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
           <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('剧情发送上限（字符）','storyLimit',s.storyLimit,1000,60000)}${number('单次回复上限（tokens）','replyTokens',s.replyTokens,128,4096)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
           ${field('Meta 回复要求（可选）','customInstruction',s.customInstruction,4)}<button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存设置</button></form><hr>
+          <h3>Meta 自动总结</h3><label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div>${field('总结提示词（留空使用内置提示词）','summaryInstruction',s.summaryInstruction,5)}<button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p><hr>
           ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p><hr>` : ''}
-          <h3>备份</h3><p>资料和 meta 对话保存在当前设备。换设备时导出备份，再导入。</p><div class="mc-toolbar"><button type="button" data-action="export">导出完整备份</button><button type="button" data-action="import" ${disabled}>导入备份</button></div></div>`;
+          <h3>入口</h3><p>魔法棒菜单 → 映间小手机。QR 可填写命令 <code>/meta</code>。</p><button type="button" data-action="create-qr" ${disabled}>添加映间 QR 按钮</button><hr><h3>备份</h3><p>资料和 meta 对话保存在当前设备。换设备时导出备份，再导入。</p><div class="mc-toolbar"><button type="button" data-action="export">导出完整备份</button><button type="button" data-action="import" ${disabled}>导入备份</button></div><p class="mc-muted">映间 v${VERSION}</p></div>`;
         this.previous = `${this.tab}:${state.selected}`;
         const saved = this.drafts.get(this.previous);
         if (saved) for (const n of this.content.querySelectorAll('input[name],textarea[name],select[name]')) {
@@ -112,5 +121,7 @@ export class Interface {
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
-    destroy() { document.removeEventListener('keydown',this.keyHandler);this.root.remove();this.launcher.remove(); }
+    destroy() { document.removeEventListener('keydown',this.keyHandler);this.root.remove(); }
 }
+
+function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}
