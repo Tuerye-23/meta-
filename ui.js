@@ -95,7 +95,7 @@ export class Interface {
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     render(state, busy = false, session = null) {
         this.capture(); this.snapshotView();
-        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary'].includes(this.tab)?'global':state.selected}:${this.diaryTab}:${this.socialSheet}`; let markup='';
+        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary'].includes(this.tab)?'global':state.selected}:${this.tab==='diary'?this.diaryTab:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}`; let markup='';
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;

@@ -33,7 +33,8 @@ try {
  fill('personality','我自己修改的人设');click('[data-action="save-profile"]');await wait(()=>$('#mc-notice').textContent.includes('角色资料已保存'),'manual edits');
  window.mockContext.characters[0].description+='新的设定';window.mockEmit('WORLDINFO_UPDATED');await wait(()=>extractions()===2 && !$('#mc-status').textContent.includes('正在输入'),'source refresh');assert.equal($('[name="personality"]').value,'我自己修改的人设');assert.equal($('#mc-profile').options.length,2);
 
- click('[data-tab="chat"]');fill('draft','我的第一条');window.mockDelay=100;click('[data-action="send"]');switchRole('Beta');
+ click('[data-tab="chat"]');fill('draft','切日记也要保留的消息草稿');click('[data-tab="diary"]');click('[data-action="diary-tab"][data-value="user"]');click('[data-tab="chat"]');assert.equal($('#mc-draft').value,'切日记也要保留的消息草稿');
+ fill('draft','我的第一条');window.mockDelay=100;click('[data-action="send"]');switchRole('Beta');
  await wait(()=>!$('#mc-status').textContent.includes('正在输入'),'role-switch generation');assert.ok(!$('.mc-messages').textContent.includes('我的第一条'));
  switchRole('Alpha');assert.ok($('.mc-messages').textContent.includes('我的第一条'));assert.ok($('.mc-messages').textContent.includes('Alpha：收到'));
  window.mockDelay=0;click('[data-tab="story"]');assert.equal($('[name="cutoff"]'),null);
