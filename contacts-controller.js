@@ -33,7 +33,7 @@ export class ContactsController {
         if(!cards.length && !books[0]?.ids.length)throw new Error('请先选择角色卡或世界书条目。');
         await app.job(cards.length?'正在读取联系人…':'正在识别条目中的人物…',async()=>{
             const origin=mainKey(app.host.context()),revision=++this.revision;
-            const data=await app.host.definitions(cards,books,false,false);
+            const data=await app.host.definitions(cards,books,books.length>0,false);
             let candidates;
             if(cards.length)candidates=data.cards.map(card=>({name:card.name,profile:definitionProfile(card,[],data.userName,data.userPersona)}));
             else {
@@ -55,20 +55,22 @@ export class ContactsController {
             let profiles;
             if(chosen.every(c=>c.profile))profiles=chosen.map(c=>c.profile);
             else {
-                const binding={avatar:'',books:r.books,autoBooks:false,includeDisabled:false};
+                const binding={avatar:'',books:r.books,autoBooks:false,includeDisabled:true};
                 if(r.candidates.length===1)profiles=[{name:chosen[0].name,description:r.data.entries.map(e=>e.content).join('\n\n'),personaMode:'inherit',binding}];
                 else {
                     const names=chosen.map(c=>c.name),raw=await app.host.generate(personaRequest(names,r.data.sources,app.state.settings,r.data.userName),app.state.settings.api);
-                    profiles=parsePersonas(raw,names).map(p=>({...p,personaMode:'extracted',binding}));
+                    profiles=parsePersonas(raw,names,r.candidates.map(c=>c.name)).map(p=>({...p,personaMode:'extracted',binding}));
                 }
                 profiles=profiles.map(p=>({...p,userName:r.data.userName,userPersona:r.data.userPersona,sourceText:r.data.sources.map(s=>s.text).join('\n\n')}));
             }
             if(app.disposed || mainKey(app.host.context())!==r.origin)throw new Error('聊天已切换，未保存联系人，请重新选择。');
             const normalized=profiles.map(p=>normalizeProfile({...p,supplementalBooks:[]},{sources:r.data.sources.map(s=>s.label),sourceKey:r.data.sourceKey}));
-            const matches=normalized.map(p=>app.state.profiles.find(old=>old.name===p.name && old.personaMode===p.personaMode && JSON.stringify(old.binding)===JSON.stringify(p.binding)));
+            // Reading a manually selected disabled entry does not make an existing contact a new person.
+            const sameBinding=(a,b)=>JSON.stringify(a && {...a,includeDisabled:false})===JSON.stringify(b && {...b,includeDisabled:false});
+            const matches=normalized.map(p=>app.state.profiles.find(old=>old.name===p.name && old.personaMode===p.personaMode && sameBinding(old.binding,p.binding)));
             if(app.state.profiles.length+matches.filter(p=>!p).length>200)throw new Error('联系人最多 200 位，请先删除不用的联系人。');
             let first;
-            for(const [i,p] of normalized.entries()){const existing=matches[i];if(!existing){app.state.profiles.push(p);app.state.threads.push(newThread(p.id));}first ??=existing?.id || p.id;}
+            for(const [i,p] of normalized.entries()){const existing=matches[i];if(!existing){app.state.profiles.push(p);app.state.threads.push(newThread(p.id));}else if(p.binding?.includeDisabled)existing.binding.includeDisabled=true;first ??=existing?.id || p.id;}
             if(!app.state.selected)app.state.selected=first;
             ui.contactPage='list';ui.editorId='';app.ui.notice(`已添加 ${chosen.length} 位联系人。`);app.queueStorySync();
         });
@@ -86,7 +88,7 @@ export class ContactsController {
         if(name==='contact-picker'){await this.picker(args.kind,args.index);return true;}
         if(name==='contact-picker-toggle'){const id=args.id;ui.pickerSelection=ui.pickerKind==='book'?[id]:ui.pickerSelection.includes(id)?ui.pickerSelection.filter(x=>x!==id):[...ui.pickerSelection,id];}
         if(name==='contact-picker-all'){
-            const options=ui.pickerKind==='cards'?(app.host.context().characters || []).map((c,i)=>String(i)):ui.pickerKind==='supplements'?(app.host.context().getWorldInfoNames?.() || []):ui.pickerEntries.filter(e=>!e.disabled).map(e=>e.id);
+            const options=ui.pickerKind==='cards'?(app.host.context().characters || []).map((c,i)=>String(i)):ui.pickerKind==='supplements'?(app.host.context().getWorldInfoNames?.() || []):ui.pickerEntries.filter(e=>ui.pickerKind==='entries' || !e.disabled).map(e=>e.id);
             ui.pickerSelection=options.every(x=>ui.pickerSelection.includes(x))?[]:options;
         }
         if(name==='contact-picker-done'){

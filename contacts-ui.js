@@ -26,7 +26,7 @@ export function contactsScreen(state,ui,context,busy) {
         let options=[],selected=[];const kind=ui.pickerKind;
         if(kind==='cards'){options=(context.characters || []).map((c,i)=>({id:String(i),name:c.name || c.data?.name || '未命名'}));selected=ui.pickerSelection;}
         if(kind==='book' || kind==='supplements'){options=(context.getWorldInfoNames?.() || []).map(name=>({id:name,name}));selected=ui.pickerSelection;}
-        if(kind==='entries' || kind==='supplementEntries'){options=ui.pickerEntries.map(e=>({id:e.id,name:e.name+(e.disabled?'（已关闭）':''),disabled:e.disabled}));selected=ui.pickerSelection;}
+        if(kind==='entries' || kind==='supplementEntries'){options=ui.pickerEntries.map(e=>({id:e.id,name:e.name+(e.disabled?'（已关闭）':''),disabled:kind==='supplementEntries' && e.disabled}));selected=ui.pickerSelection;}
         return wrap(`<div class="mc-contact-heading"><span>${kind==='book'?'选择一本世界书':'可多选'}</span>${kind==='book'?'':`<button type="button" data-action="contact-picker-all" ${disabled}>全选</button>`}</div><div class="mc-row-group">${options.map(o=>`<button type="button" class="mc-nav-row" data-action="contact-picker-toggle" data-id="${esc(o.id)}" aria-pressed="${selected.includes(o.id)}" ${busy || o.disabled?'disabled':''}><span>${esc(o.name)}</span><span class="mc-selection ${selected.includes(o.id)?'mc-checked':''}">${selected.includes(o.id)?'✓':''}</span></button>`).join('') || '<p class="mc-contact-empty">没有可选项目</p>'}</div><button type="button" class="mc-primary mc-contact-primary" data-action="contact-picker-done" ${disabled}>确定${selected.length?`（${selected.length}）`:''}</button>`);
     }
     return wrap('<p class="mc-contact-empty">请返回联系人列表</p>');

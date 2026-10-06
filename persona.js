@@ -16,19 +16,40 @@ export function personaRequest(names,sources,settings,userName='用户') {
     return {systemPrompt:bind(settings.headPrompt ?? HEAD_PROMPT),prompt:[
         {role:'assistant',content:bind(settings.aiPrompt ?? AI_PROMPT)},
         {role:'system',content:EXTRACTION_PROMPT},
-        {role:'user',content:literalMacros(`所选角色：\n${names.join('\n')}\n\n以下是原始素材：\n${material}`)},
+        {role:'user',content:literalMacros(`所选角色：\n${names.join('\n')}\n\n请依次使用以下完整标题，每个标题后写该角色的人设正文：\n${names.map(name=>`【${name}】`).join('\n')}\n姓名照抄标题，不缩写、不翻译，不输出未选人物的独立人设。\n\n以下是原始素材：\n${material}`)},
     ],responseLength:4096};
 }
 
-export function parsePersonas(raw,names) {
-    const content=text(raw).trim().replace(/^```(?:text)?\s*\n/i,'').replace(/\n```$/,'');
+// Body section headings are not additional contacts. Keep them in the original prose.
+const PERSONA_SECTIONS=new Set(('身份 姓名 名字 别名 年龄 性别 种族 职业 外貌 外观 外貌特征 性格 性格特征 性格与行为习惯 背景 背景故事 背景设定 身世 经历 人物关系 关系 与用户的关系 能力 能力与限制 限制 弱点 语言习惯 说话方式 对话示例 喜好 爱好 习惯 动机 目标 设定 人设 基础信息 基本信息 个人信息 角色资料 角色描述 描述 补充设定 世界观 共同背景 当前处境 注意事项 name identity appearance personality background history relationships abilities limitations speech examples interests goals notes').split(' '));
+const normalizeName=value=>value.normalize('NFKC').trim().replace(/\s+/g,' ').toLowerCase();
+
+export function parsePersonas(raw,names,knownNames=names) {
+    const content=text(raw).replace(/\r\n?/g,'\n').trim().replace(/^```(?:text|markdown)?[ \t]*\n/i,'').replace(/\n```$/,'').trim();
     if(!content)throw new Error('模型没有返回人设正文。');
-    const headings=[...content.matchAll(/^【([^\n【】]+)】\s*$/gm)];
+    const expected=new Map(names.map(name=>[normalizeName(name),name]));
+    if(expected.size!==names.length)throw new Error('所选姓名无法明确区分，请分别提取。');
+    const known=new Set(knownNames.map(normalizeName)),headings=[];
+    for(const match of content.matchAll(/^([^\n]+)$/gm)) {
+        const line=match[0].trim(),markdown=/^(?:#{1,6}\s+|\*\*|__)/.test(line);
+        let label=line.replace(/^#{1,6}\s+/,'').replace(/\s+#+$/,'').replace(/^(\*\*|__)(.*?)\1$/,'$2').trim();
+        const bracket=label.match(/^【([^【】]+)】$/);
+        if(bracket)label=bracket[1].trim();
+        else if(!markdown || !known.has(normalizeName(label)))continue;
+        const key=normalizeName(label);
+        if(!known.has(key) && PERSONA_SECTIONS.has(key))continue;
+        headings.push({index:match.index,end:match.index+match[0].length,name:expected.get(key) || label});
+    }
     const restoreNames=value=>value.replace(/｛｛(user|char)｝｝/gi,(_,name)=>'{{'+name.toLowerCase()+'}}');
     if(names.length===1 && !headings.length)return [{name:names[0],description:restoreNames(content)}];
-    if(!headings.length || content.slice(0,headings[0].index).trim())throw new Error('批量结果需要以【角色姓名】分隔，请重试。');
-    const result=headings.map((h,i)=>({name:h[1].trim(),description:restoreNames(content.slice(h.index+h[0].length,headings[i+1]?.index ?? content.length).trim())}));
-    if(result.length!==names.length || new Set(result.map(r=>r.name)).size!==result.length || result.some(r=>!names.includes(r.name) || !r.description) || names.some(n=>!result.some(r=>r.name===n)))throw new Error('提取结果的姓名或数量与所选角色不一致，未保存任何联系人，请重试。');
+    if(!headings.length || content.slice(0,headings[0].index).trim())throw new Error('提取结果缺少角色标题，或标题前包含额外文字；需要以【角色姓名】开始。未保存任何联系人，请重试。');
+    const result=headings.map((h,i)=>({name:h.name,description:restoreNames(content.slice(h.end,headings[i+1]?.index ?? content.length).trim())}));
+    const missing=names.filter(n=>!result.some(r=>r.name===n));
+    const extra=[...new Set(result.filter(r=>!names.includes(r.name)).map(r=>r.name))];
+    const duplicate=[...new Set(result.filter((r,i)=>result.findIndex(p=>p.name===r.name)!==i).map(r=>r.name))];
+    const empty=result.filter(r=>!r.description).map(r=>r.name);
+    const issues=[missing.length?`缺少：${missing.join('、')}`:'',extra.length?`未选中或姓名不同：${extra.join('、')}`:'',duplicate.length?`重复：${duplicate.join('、')}`:'',empty.length?`人设为空：${empty.join('、')}`:''].filter(Boolean);
+    if(issues.length)throw new Error(`提取结果校验失败（${issues.join('；')}）。未保存任何联系人，请重试。`);
     return names.map(n=>result.find(r=>r.name===n));
 }
 

@@ -52,6 +52,30 @@ test('direct definitions preserve raw card fields, selected entry IDs and before
     const state=freshState();state.profiles=[profile];state.threads=[newThread(profile.id)];state.selected=profile.id;const restored=validateBackup(state);assert.deepEqual(restored.profiles[0].binding,profile.binding);assert.equal(restored.profiles[0].personaMode,'inherit');
 });
 
+test('persona body headings are retained rather than counted as contacts',()=>{
+    const body='【性格】\n谨慎而认真。\n【背景】\n与Rick一起冒险。\n【人物关系】\nRick是他的外公。';
+    assert.deepEqual(parsePersonas(`【Morty Smith】\n${body}`,['Morty Smith'],['Morty Smith','Rick Sanchez']),[{name:'Morty Smith',description:body}]);
+    assert.equal(parsePersonas(body,['Morty Smith'])[0].description,body);
+    const batch=parsePersonas(`【Morty Smith】\n${body}\n【Rick Sanchez】\n【性格】\n直接。`,['Morty Smith','Rick Sanchez']);
+    assert.equal(batch[0].description,body);assert.equal(batch[1].description,'【性格】\n直接。');
+    // A real character whose name happens to be a section label still has its own boundary.
+    assert.deepEqual(parsePersonas('【A】\n第一位。\n【name】\n第二位。',['A','name']).map(p=>p.description),['第一位。','第二位。']);
+});
+
+test('persona headings accept Markdown, CRLF, letter case and harmless spacing without merging variants',()=>{
+    const raw='```markdown\r\n### **【morty   smith】**\r\n【背景】\r\n原文。\r\n## Rick Sanchez\r\n独立人设。\r\n```';
+    const result=parsePersonas(raw,['Rick Sanchez','Morty Smith']);
+    assert.deepEqual(result.map(p=>p.name),['Rick Sanchez','Morty Smith']);assert.equal(result[1].description,'【背景】\n原文。');
+    assert.equal(parsePersonas('**Morty Smith**\n准确的人设。',['Morty Smith'])[0].description,'准确的人设。');
+    assert.throws(()=>parsePersonas('【Rick Prime】\n另一位人物。',['Rick C-137'],['Rick Prime','Rick C-137']),/缺少：Rick C-137；未选中或姓名不同：Rick Prime/);
+    assert.throws(()=>parsePersonas('【Morty】\n姓名缩写。',['Morty Smith']),/缺少：Morty Smith/);
+    assert.throws(()=>parsePersonas('【A】\n一\n【a】\n二',['A']),/重复：A/);
+    assert.throws(()=>parsePersonas('【A】\n一\n## B\n未选中角色。',['A'],['A','B']),/未选中或姓名不同：B/);
+    assert.throws(()=>parsePersonas('【A】\n\n【B】\n二',['A','B']),/人设为空：A/);
+    const prompt=personaRequest(['Morty Smith'],[{label:'多人条目',text:'人设素材'}],freshState().settings);
+    assert.match(prompt.prompt.at(-1).content,/【Morty Smith】/);assert.match(prompt.prompt.at(-1).content,/不缩写、不翻译/);
+});
+
 test('backup migration removes automatically injected bound-book material and keeps explicit supplements',()=>{
  const state=freshState();const p=normalizeProfile({name:'A',personaMode:'inherit',binding:{avatar:'a.png',books:[],autoBooks:true},worldBefore:'不应自动保留的绑定世界书'});assert.equal(p.worldBefore,'');assert.equal(p.binding.autoBooks,false);
  p.supplementalBooks=[{name:'需要的世界书',ids:['3']}];state.profiles=[p];state.threads=[newThread(p.id)];assert.deepEqual(validateBackup(state).profiles[0].supplementalBooks,p.supplementalBooks);
