@@ -248,3 +248,30 @@
 #mc-root .mc-log-error span { color:#a25d65; }
 #mc-root textarea[readonly] { background:#ffffff57; color:#687a94; }
 @media(max-width:360px) { #mc-root .mc-settings { padding:17px 10px 25px; } #mc-root .mc-setting-group>summary { padding:14px 11px; gap:10px; } #mc-root .mc-setting-body { padding:14px 11px 17px; } #mc-root .mc-setting-group>summary strong { font-size:13px; } }
+
+/* Contacts use separate list, picker and editor pages. */
+#mc-root .mc-contacts {padding:16px 18px 22px;}
+#mc-root .mc-contact-search {display:flex;align-items:center;gap:8px;padding:0 12px;background:#ffffff70;border:1px solid #ffffffc0;border-radius:17px;margin-bottom:20px;}
+#mc-root .mc-contact-search svg {width:18px;height:18px;fill:none;stroke:#7388aa;stroke-width:1.7;flex-shrink:0;}
+#mc-root .mc-contact-search input {background:transparent;border:0;padding:12px 0;font-size:13px;}
+#mc-root .mc-contact-heading {display:flex;align-items:center;justify-content:space-between;font-size:12px;margin:12px 3px;}
+#mc-root .mc-contact-heading button {background:transparent;border:0;color:var(--mc-accent);padding:0 4px;}
+#mc-root .mc-row-group {background:#ffffff55;border:1px solid #ffffffa8;border-radius:20px;overflow:hidden;margin-bottom:18px;}
+#mc-root .mc-row-group>.mc-nav-row,#mc-root .mc-row-group>.mc-person-row {display:flex;align-items:center;gap:12px;width:100%;min-height:54px;border:0;border-radius:0;background:transparent;padding:12px 15px;text-align:left;position:relative;font-size:13px;}
+#mc-root .mc-row-group>button+button:before {content:'';position:absolute;top:0;left:15px;right:15px;height:1px;background:#6686b016;}
+#mc-root .mc-person-row strong {flex:1;min-width:0;overflow-wrap:anywhere;font-weight:500;}
+#mc-root .mc-person-row .mc-avatar {width:37px;height:37px;border-radius:50%;font:19px/1 system-ui;background:#aacaff80;}
+#mc-root .mc-row-value {margin-left:auto;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mc-muted);font-size:12px;}
+#mc-root .mc-row-arrow {width:17px;height:17px;flex-shrink:0;fill:none;stroke:#7f93b0;stroke-width:1.5;}
+#mc-root .mc-contact-identity {display:flex;align-items:center;gap:16px;background:#ffffff45;border:1px solid #ffffffa8;border-radius:20px;padding:18px;margin-bottom:18px;}
+#mc-root .mc-contact-identity .mc-avatar {border-radius:50%;width:48px;height:48px;}
+#mc-root .mc-contact-primary {width:100%;margin-top:4px;min-height:46px;border-radius:14px;}
+#mc-root .mc-contact-delete {display:block;margin:24px auto 0;border:0;background:transparent;color:#c05e6b;font-size:12px;}
+#mc-root .mc-contact-empty {text-align:center;color:var(--mc-muted);padding:16px;font-size:13px;}
+#mc-root .mc-contact-segments {display:flex;padding:4px;background:#ffffff60;border:1px solid #ffffffa8;border-radius:15px;margin-bottom:22px;}
+#mc-root .mc-contact-segments button {flex:1;border:0;border-radius:11px;background:transparent;padding:6px;}
+#mc-root .mc-contact-segments .mc-active {background:var(--mc-accent);color:white;box-shadow:0 3px 9px #537ddb23;}
+#mc-root .mc-selection {display:grid;place-items:center;flex-shrink:0;margin-left:auto;width:23px;height:23px;border:1.5px solid #97aecd;border-radius:50%;font-size:14px;}
+#mc-root .mc-selection.mc-checked {background:var(--mc-accent);border-color:var(--mc-accent);color:white;}
+#mc-root textarea[readonly] {opacity:.8;}
+#mc-root .mc-header #mc-app-title {max-width:calc(50% - 60px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:0;}

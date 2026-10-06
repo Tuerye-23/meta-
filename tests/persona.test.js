@@ -43,11 +43,17 @@ test('direct definitions preserve raw card fields, selected entry IDs and before
     const books={Primary:{entries:{a:{uid:7,position:0,order:100,content:'前置 {{char}}'},b:{uid:8,position:1,order:90,content:'后置'},off:{uid:9,disable:true,content:'已关闭'}}},Extra:{entries:{c:{uid:10,content:'额外绑定'}}}};
     const c={characterId:0,chatId:'main',name1:'恒',name2:'主卡',characters:[{name:'主卡',avatar:'card.png',description:'原始描述 {{char}}',personality:'原始性格',scenario:'原始场景',mes_example:'<START>\n{{char}}: 原始示例',data:{extensions:{world:'Primary'}}}],worldInfo:{charLore:[{name:'card',extraBooks:['Extra']}]},powerUserSettings:{persona_description:'用户原文'},loadWorldInfo:async name=>books[name],unshallowCharacter:async()=>{},generateRaw:()=>{throw Error('must not call model');}};
     const host=createHost({SillyTavern:{getContext:()=>c}});const data=await host.currentDefinitions();
-    assert.equal(data.cards[0].description,'原始描述 {{char}}');assert.equal(data.entries.length,3);
-    const profile=normalizeProfile(definitionProfile(data.cards[0],data.entries,data.userName,data.userPersona));assert.match(profile.worldBefore,/前置/);assert.match(profile.worldAfter,/后置/);assert.equal(profile.scenario,'原始场景');assert.equal(profile.personaMode,'inherit');
+    assert.equal(data.cards[0].description,'原始描述 {{char}}');assert.equal(data.entries.length,0);
+    const profile=normalizeProfile(definitionProfile(data.cards[0],data.entries,data.userName,data.userPersona));assert.equal(profile.worldBefore,'');assert.equal(profile.worldAfter,'');assert.equal(profile.scenario,'原始场景');assert.equal(profile.personaMode,'inherit');
     const selection=await host.definitions([],[{name:'Primary',ids:['8']}]);assert.equal(selection.entries.length,1);assert.equal(selection.entries[0].content,'后置');
     await assert.rejects(()=>host.definitions([],[{name:'Primary',ids:['404']}]),/不存在/);await assert.rejects(()=>host.definitions([],[{name:'Primary',ids:['9']}]),/启用状态/);
     assert.equal((await host.definitions([],[{name:'Primary',ids:['9']}],true)).entries[0].content,'已关闭');
     c.characters[0].description='已修改的原始描述';const refreshed=await host.linkedDefinition(profile);assert.equal(refreshed.cards[0].description,c.characters[0].description);
     const state=freshState();state.profiles=[profile];state.threads=[newThread(profile.id)];state.selected=profile.id;const restored=validateBackup(state);assert.deepEqual(restored.profiles[0].binding,profile.binding);assert.equal(restored.profiles[0].personaMode,'inherit');
+});
+
+test('backup migration removes automatically injected bound-book material and keeps explicit supplements',()=>{
+ const state=freshState();const p=normalizeProfile({name:'A',personaMode:'inherit',binding:{avatar:'a.png',books:[],autoBooks:true},worldBefore:'不应自动保留的绑定世界书'});assert.equal(p.worldBefore,'');assert.equal(p.binding.autoBooks,false);
+ p.supplementalBooks=[{name:'需要的世界书',ids:['3']}];state.profiles=[p];state.threads=[newThread(p.id)];assert.deepEqual(validateBackup(state).profiles[0].supplementalBooks,p.supplementalBooks);
+ const t=newThread(p.id);t.story={text:'长正文'.repeat(10000),memoryText:'尾部剧情记忆'};const request=buildPrompt(p,t,{...state.settings,storyLimit:100});assert.match(request.prompt.map(m=>m.content).join('\n'),/尾部剧情记忆/);assert.equal(request.storyClipped,false);assert.ok(request.prompt.map(m=>m.content).join('\n').length>30000);
 });

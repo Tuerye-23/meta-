@@ -40,3 +40,15 @@ export function definitionProfile(card,entries,userName,userPersona) {
         userName,userPersona,personaMode:'inherit',binding:card.binding,
         sourceText:[card.sourceText,format(entries)].filter(Boolean).join('\n\n'),sources:[`角色卡 ${card.name}`,...entries.map(e=>e.label)]};
 }
+
+export function recognitionRequest(sources,settings,userName='用户') {
+    const request=personaRequest(['待识别人物'],sources,settings,userName);
+    request.prompt[1].content=`识别以下素材中拥有实际人设的角色。只输出角色姓名，每行一位。合并同一人物的别名，不把世界书标题、用户、组织、场景或仅被提到的名字当成联系人。不写编号、解释或人设正文。不能确定任何角色时只输出“未识别到角色”。`;
+    request.prompt[2].content=literalMacros('以下是待识别的原始素材：\n'+sources.map(s=>`[来源：${s.label}]\n${s.text}`).join('\n\n'));
+    return request;
+}
+export function parseRecognizedNames(raw) {
+    const content=text(raw).trim().replace(/^```(?:text)?\s*\n/i,'').replace(/\n```$/,'');
+    if(!content || content==='未识别到角色')throw new Error('未识别到有明确人设的角色，请换一个条目或手动添加。');
+    return targetNames(content);
+}

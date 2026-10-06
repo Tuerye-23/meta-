@@ -1,4 +1,4 @@
-import { createIndependentClient } from './api.js';
+import { createIndependentClient, readEventStream, responseText } from './api.js';
 import { characterKey, chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
 
 export function createHost(root = globalThis) {
@@ -11,7 +11,7 @@ export function createHost(root = globalThis) {
     let hostBusy = false;
     const listeners = [];
     let regexModule;
-    let worldModule;
+    let worldModule;let completionModule;let scriptModule;
     const enabledRegexes = async () => {
         const c=context();
         if(c.extensionSettings?.disabledExtensions?.includes('regex')) return [];
@@ -35,6 +35,31 @@ export function createHost(root = globalThis) {
             if(api.mode==='independent')return independent.generate(request,api);
             const c=context();
             if(this.busy)throw new Error('主线正在生成，请等这一轮结束。');
+            if(api.stream) {
+                const completion=typeof c.createGenerationParameters==='function'?c:await (completionModule ??= import('/scripts/openai.js'));
+                const mainApi=c.mainApi ?? (await (scriptModule ??= import('/script.js'))).main_api;
+                if(mainApi!=='openai')throw new Error('沿用酒馆的流式输出需要聊天补全 API。');
+                if(typeof completion.createGenerationParameters!=='function')throw new Error('当前酒馆缺少流式接口，请使用独立 API 的流式输出。');
+                const settings=JSON.parse(JSON.stringify(completion.oai_settings ?? c.chatCompletionSettings));
+                const model=completion.getChatCompletionModel(settings);
+                let messages=[{role:'system',content:literalMacros(request.systemPrompt)},...request.prompt.map(m=>({...m,content:literalMacros(m.content)}))];
+                const type=c.eventTypes?.CHAT_COMPLETION_PROMPT_READY;
+                if(type){const event={chat:messages,dryRun:false};await c.eventSource?.emit?.(type,event);messages=event.chat;}
+                const {generate_data}=await completion.createGenerationParameters(settings,model,'quiet',messages);
+                const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),(Number(api.timeout)||120)*1000);
+                const stopped=c.eventTypes?.GENERATION_STOPPED,abort=()=>controller.abort();
+                if(stopped)c.eventSource?.on?.(stopped,abort);
+                try {
+                    const ready=c.eventTypes?.CHAT_COMPLETION_SETTINGS_READY;
+                    if(ready)await c.eventSource?.emit?.(ready,generate_data);
+                    generate_data.stream=true;
+                    const response=await root.fetch('/api/backends/chat-completions/generate',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(generate_data),signal:controller.signal});
+                    if(!response.ok)throw new Error(`酒馆 API 请求失败（${response.status}）。`);
+                    if(!/text\/event-stream/i.test(response.headers.get('content-type') || ''))return responseText(await response.json());
+                    const state={reasoning:'',images:[],signature:'',toolSignatures:{}};
+                    return await readEventStream(response,request.onText,data=>completion.getStreamingReply(data,state,{chatCompletionSource:settings.chat_completion_source,model,overrideShowThoughts:false}));
+                } finally {clearTimeout(timeout);if(stopped)c.eventSource?.removeListener?.(stopped,abort);}
+            }
             if(typeof c.generateRaw!=='function')throw new Error('当前酒馆没有 generateRaw 接口。');
             const result=await c.generateRaw({...request,systemPrompt:literalMacros(request.systemPrompt),prompt:request.prompt.map(m=>({...m,content:literalMacros(m.content)})),trimNames:false});
             if(typeof result!=='string' || !result.trim())throw new Error('模型没有返回有效文字。');
@@ -56,7 +81,7 @@ export function createHost(root = globalThis) {
             const group=c.groupId!=null && c.groupId!=='' ? c.groups?.find(g=>String(g.id)===String(c.groupId)) : null;
             const ids=group?(group.members || []).map(avatar=>c.characters.findIndex(card=>card.avatar===avatar)).filter(i=>i>=0):[Number(c.characterId)];
             if((c.groupId!=null && c.groupId!=='' && !group) || !ids.length)return null;
-            const data=await this.definitions(ids,[],false,true);
+            const data=await this.definitions(ids,[],false,false);
             if(characterKey(context())!==originKey || mainKey(context())!==sourceKey)throw new Error('聊天已切换，取消旧人物素材读取。');
             return {...data,originKey,fingerprint:sourceFingerprint([data.cards,data.entries,data.userName,data.userPersona])};
         },
@@ -80,7 +105,7 @@ export function createHost(root = globalThis) {
                 cards.push({name,avatar:card.avatar || '',description:get('description'),personality:get('personality'),scenario:get('scenario'),examples:get('mes_example'),sourceText:['description','personality','scenario','mes_example'].map(key=>get(key)?`[${key}]\n${get(key)}`:'').filter(Boolean).join('\n\n'),binding:{avatar:card.avatar || '',autoBooks,books:books.map(b=>({...b})),includeDisabled},linkedBooks:linked.map(b=>b.name)});
                 for(const [key,e] of Object.entries(d.character_book?.entries || {})) {
                     if(!includeDisabled && (e.disable || e.enabled===false))continue;
-                    if(e.content)embedded.push({id:String(e.uid ?? e.id ?? key),label:`${name} 内嵌世界书 / ${e.comment || e.name || (e.keys || []).join('、') || key}`,content:text(e.content),position:e.position ?? e.extensions?.position ?? 'before_char',order:Number(e.insertion_order ?? e.order)||0,avatar:card.avatar || '',book:''});
+                    if(autoBooks && e.content)embedded.push({id:String(e.uid ?? e.id ?? key),label:`${name} 内嵌世界书 / ${e.comment || e.name || (e.keys || []).join('、') || key}`,content:text(e.content),position:e.position ?? e.extensions?.position ?? 'before_char',order:Number(e.insertion_order ?? e.order)||0,avatar:card.avatar || '',book:''});
                 }
             }
             const entries=[...embedded];
@@ -115,7 +140,7 @@ export function createHost(root = globalThis) {
                 if(id<0)throw new Error('绑定的角色卡已不存在，请重新选择来源或改用独立人设。');
                 ids=[id];
             }
-            return this.definitions(ids,binding.books,binding.includeDisabled,binding.autoBooks);
+            return this.definitions(ids,ids.length?[]:binding.books,binding.includeDisabled,false);
         },
         async currentSources() {
             const ctx=context(); const originKey=characterKey(ctx); const sourceKey=mainKey(ctx);

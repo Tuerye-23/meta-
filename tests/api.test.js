@@ -4,7 +4,7 @@ import { apiDefaults, normalizeApi, validateApi, apiBaseUrl } from '../api-confi
 import { independentBody, createIndependentClient, responseText } from '../api.js';
 import { createHost } from '../host.js';
 import { freshState, validateBackup } from '../core.js';
-const config={mode:'independent',transport:'direct',baseUrl:'https://example.test/v1',apiKey:'test-secret',model:'test-model'};
+const config={mode:'independent',transport:'direct',baseUrl:'https://example.test/v1',apiKey:'test-secret',model:'test-model',temperature:'',topP:'',frequencyPenalty:'',presencePenalty:'',maxTokens:''};
 const prompt={systemPrompt:'system {{setvar::a::1}}',prompt:[{role:'user',content:'hello'}],responseLength:3000};
 const reply=body=>new Response(JSON.stringify(body),{status:200});
 const fixture=()=>{
@@ -15,10 +15,10 @@ const fixture=()=>{
 test('optional API parameters remain absent, including max tokens despite internal responseLength',()=>{
  const {body}=independentBody(prompt,config);assert.deepEqual(Object.keys(body).sort(),['messages','model','stream']);assert.match(body.messages[0].content,/｛｛setvar/);assert.equal(body.messages[1].content,'hello');
  const set=independentBody(prompt,{...config,temperature:'0',topP:' 0.95 ',topK:'20',frequencyPenalty:'-0.5',presencePenalty:'0',repetitionPenalty:'1.1',seed:'0',maxTokens:'4000',maxTokenField:'max_completion_tokens',extraBody:'{"reasoning_effort":"low"}'}).body;
- assert.equal(set.temperature,0);assert.equal(set.top_p,0.95);assert.equal(set.presence_penalty,0);assert.equal(set.seed,0);assert.equal(set.max_completion_tokens,4000);assert.equal(set.repetition_penalty,1.1);assert.equal(set.reasoning_effort,'low');assert.equal('max_tokens' in set,false);
+ assert.equal(set.temperature,0);assert.equal(set.top_p,0.95);assert.equal(set.presence_penalty,0);assert.equal(set.max_tokens,4000);for(const key of ['seed','top_k','repetition_penalty','reasoning_effort','max_completion_tokens'])assert.equal(key in set,false);
 });
-test('invalid numeric values and malformed or routing-changing JSON are rejected',()=>{
- for(const values of [{temperature:'abc'},{topP:'1.5'},{seed:'0.5'},{maxTokens:'0'},{extraBody:'[]'},{extraBody:'{"messages":[]}'},{extraBody:'{"reverse_proxy":"https://elsewhere.test"}'}])assert.throws(()=>validateApi({...config,...values}));
+test('invalid numeric values are rejected',()=>{
+ for(const values of [{temperature:'abc'},{topP:'1.5'},{frequencyPenalty:'3'},{maxTokens:'0'}])assert.throws(()=>validateApi({...config,...values}));
  assert.equal(validateApi({...config,temperature:'  '}).api.temperature,'');assert.throws(()=>apiBaseUrl('javascript:alert(1)'));assert.equal(apiBaseUrl('https://example.test/v1/chat/completions/'),'https://example.test/v1');
 });
 test('direct API uses separate endpoint and key without host parameters or tokenizer defaults',async()=>{
@@ -52,14 +52,14 @@ test('API config persists blank values and migrates existing installations to ho
 test('presets preserve connection fields and do not modify existing configurations',()=>{
  const old={...config,temperature:'',maxTokens:''};assert.equal(normalizeApi(old).maxTokens,'');
  const preset=apiDefaults({...old,model:'gpt-5-mini',topP:'0.9',extraBody:'{"x":1}'});
- assert.equal(preset.baseUrl,config.baseUrl);assert.equal(preset.apiKey,config.apiKey);assert.equal(preset.temperature,'1');assert.equal(preset.maxTokens,'4096');assert.equal(preset.maxTokenField,'max_completion_tokens');assert.equal(preset.topP,'');assert.equal(preset.extraBody,'');
- const claude=apiDefaults({...old,provider:'claude'});assert.equal(claude.temperature,'');assert.equal(claude.timeout,'120');
+ assert.equal(preset.baseUrl,config.baseUrl);assert.equal(preset.apiKey,config.apiKey);assert.equal(preset.temperature,'1');assert.equal(preset.maxTokens,'12000');assert.equal(preset.maxTokenField,undefined);assert.equal(preset.topP,'0.98');assert.equal(preset.extraBody,undefined);
+ const claude=apiDefaults({...old,provider:'claude'});assert.equal(claude.temperature,'1');assert.equal(claude.timeout,'120');
 });
 test('Claude builds native system and messages, requires output limit and omits OpenAI parameters',()=>{
  const c={...config,provider:'claude',maxTokens:'4096',maxTokenField:'max_completion_tokens',frequencyPenalty:'bad',seed:'123'};
  const {body}=independentBody({...prompt,prompt:[{role:'system',content:'second system'},...prompt.prompt]},c);
  assert.equal(body.max_tokens,4096);assert.equal(body.messages[0].role,'user');assert.match(body.system,/second system/);assert.equal('seed' in body,false);assert.equal('frequency_penalty' in body,false);assert.equal('max_completion_tokens' in body,false);
- assert.throws(()=>independentBody(prompt,{...c,maxTokens:''}),/必须填写输出上限/);assert.throws(()=>independentBody(prompt,{...c,temperature:'1.1'}),/温度/);assert.throws(()=>validateApi({...c,extraBody:'{"seed":1}'}),/Claude 不支持/);
+ assert.throws(()=>independentBody(prompt,{...c,maxTokens:''}),/必须填写输出上限/);assert.throws(()=>independentBody(prompt,{...c,temperature:'1.1'}),/温度/);assert.equal(validateApi({...c,extraBody:'{"seed":1}'}).api.extraBody,undefined);
  assert.equal(apiBaseUrl('https://api.anthropic.com/v1/messages/'),'https://api.anthropic.com/v1');assert.equal(apiBaseUrl('https://api.anthropic.com'),'https://api.anthropic.com/v1');
  assert.equal(apiBaseUrl('https://example.test/messages'),'https://example.test');assert.equal(apiBaseUrl('https://example.test'),'https://example.test');
 });
@@ -72,15 +72,49 @@ test('Claude direct requests use Messages authentication and parse only text blo
 test('TT Claude forwarding selects native format and exact upstream body without shared credentials',async()=>{
  const {root,calls}=fixture();root.__TAURITAVERN__={};const c={...config,provider:'claude',transport:'host',maxTokens:'4096',extraBody:'{"thinking":{"type":"disabled"}}'};
  await createHost(root).generate(prompt,c);const body=calls[0].body;assert.equal(body.chat_completion_source,'custom');assert.equal(body.custom_api_format,'claude_messages');assert.equal(body.custom_url,'');assert.equal(body.proxy_password,config.apiKey);assert.equal(body.use_sysprompt,true);
- const upstream=JSON.parse(body.custom_include_body);assert.equal(upstream.messages[0].role,'user');assert.match(upstream.system,/system/);assert.deepEqual(upstream.thinking,{type:'disabled'});assert.ok(JSON.parse(body.custom_exclude_body).includes('temperature'));
+ const upstream=JSON.parse(body.custom_include_body);assert.equal(upstream.messages[0].role,'user');assert.match(upstream.system,/system/);assert.equal(upstream.thinking,undefined);assert.ok(JSON.parse(body.custom_exclude_body).includes('temperature'));
  root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return reply({data:[{id:'claude-test'}]});};assert.deepEqual(await createHost(root).models({...c,model:'',maxTokens:''}),['claude-test']);assert.equal(calls.at(-1).body.custom_api_format,'claude_messages');
 });
 test('ST Claude uses its Claude route for generation and explicit headers for models',async()=>{
  const {root,calls}=fixture();const c={...config,provider:'claude',transport:'host',maxTokens:'4096'};
  await createHost(root).generate(prompt,c);assert.equal(calls[0].body.chat_completion_source,'claude');assert.equal(calls[0].body.reverse_proxy,config.baseUrl);assert.equal(calls[0].body.messages[0].role,'system');
- await assert.rejects(()=>createHost(root).generate(prompt,{...c,extraBody:'{"thinking":{"type":"disabled"}}'}),/自定义 JSON/);
+ await createHost(root).generate(prompt,{...c,extraBody:'{"thinking":{"type":"disabled"}}'});assert.equal(calls[1].body.thinking,undefined);
  root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return reply({data:[{id:'claude-test'}]});};await createHost(root).models(c);const headers=JSON.parse(calls.at(-1).body.custom_include_headers);assert.equal(headers['x-api-key'],config.apiKey);assert.equal(headers.Authorization,'');
 });
 test('content filter reasons are distinct from malformed responses',()=>{
  assert.throws(()=>responseText({promptFeedback:{blockReason:'PROHIBITED_CONTENT'}}),/模型服务拦截/);assert.throws(()=>responseText({choices:[{finish_reason:'content_filter',message:{content:''}}]}),/模型服务拦截/);
+});
+
+test('new default requests and reset preserve the connection and streaming preference',()=>{
+ const value={baseUrl:config.baseUrl,model:'gpt-5-mini',stream:true};
+ const {body}=independentBody(prompt,value);assert.equal(body.temperature,1);assert.equal(body.top_p,0.98);assert.equal(body.frequency_penalty,0);assert.equal(body.presence_penalty,0);assert.equal(body.max_completion_tokens,12000);assert.equal(body.stream,true);
+ const reset=apiDefaults({...config,stream:true});assert.equal(reset.baseUrl,config.baseUrl);assert.equal(reset.apiKey,config.apiKey);assert.equal(reset.stream,true);assert.equal(reset.maxTokens,'12000');
+ const restored=validateBackup(freshState());assert.equal(restored.settings.api.topP,'0.98');assert.equal(restored.settings.storyLimit,undefined);assert.equal(restored.settings.replyTokens,undefined);
+});
+const sse=(frames,split=3)=>{const bytes=new TextEncoder().encode(frames);return new Response(new ReadableStream({start(c){for(let i=0;i<bytes.length;i+=split)c.enqueue(bytes.slice(i,i+split));c.close();}}),{headers:{'content-type':'text/event-stream'}});};
+test('independent OpenAI and native Claude streaming decode split Unicode and omit reasoning',async()=>{
+ for(const provider of ['openai','claude']) {
+  const {root,calls}=fixture(),updates=[];
+  root.fetch=async(url,options)=>{calls.push(JSON.parse(options.body));return provider==='claude'?sse('event: content_block_delta\r\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"秘密"}}\r\n\r\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}\r\n\r\ndata: {"type":"message_stop"}\r\n\r\n',1):sse('data: {"choices":[{"delta":{"reasoning_content":"秘密"}}]}\n\ndata: {"choices":[{"delta":{"content":"你"}}]}\n\ndata: {"choices":[{"delta":{"content":"好"}}]}\n\ndata: [DONE]\n\n',2);};
+  const result=await createHost(root).generate({...prompt,onText:t=>updates.push(t)},{...config,provider,maxTokens:'12000',stream:true});assert.equal(result,'你好');assert.equal(updates.at(-1),'你好');assert.equal(calls[0].stream,true);assert.ok(updates.every(t=>!t.includes('秘密')));
+ }
+});
+test('failed or incomplete streaming never returns a successful partial reply',async()=>{
+ const {root}=fixture();root.fetch=async()=>sse('data: {"choices":[{"delta":{"content":"部分"}}]}\n\n');await assert.rejects(()=>createHost(root).generate(prompt,{...config,stream:true}),/提前结束/);
+ root.fetch=async()=>sse('data: {"error":{"message":"bad test-secret"}}\n\n');await assert.rejects(()=>createHost(root).generate(prompt,{...config,stream:true}),e=>e.message.includes('bad')&&!e.message.includes('test-secret'));
+});
+test('host streaming uses a private copy of host settings and its existing output limit',async()=>{
+ const {root,c,calls}=fixture();c.mainApi='openai';c.oai_settings={max_tokens:9876,temperature:0.4,stream_openai:false,chat_completion_source:'custom'};const before=structuredClone(c.oai_settings);
+ c.getChatCompletionModel=()=> 'host-model';c.createGenerationParameters=async(settings,model,type,messages)=>{assert.equal(type,'quiet');return {generate_data:{...settings,messages,model,stream:false}};};c.getStreamingReply=data=>data.choices?.[0]?.delta?.content || '';
+ root.fetch=async(url,opts)=>{calls.push(JSON.parse(opts.body));return sse('data: {"choices":[{"delta":{"content":"宿主回复"}}]}\n\ndata: [DONE]\n\n');};
+ assert.equal(await createHost(root).generate(prompt,{mode:'host',stream:true}),'宿主回复');assert.equal(calls[0].max_tokens,9876);assert.equal(calls[0].stream,true);assert.deepEqual(c.oai_settings,before);
+});
+
+test('Claude default sampling sends temperature alone and Top P after temperature is cleared',()=>{
+ const defaults=apiDefaults({...config,provider:'claude'});const body=independentBody(prompt,defaults).body;assert.equal(body.temperature,1);assert.equal('top_p' in body,false);assert.equal(body.max_tokens,12000);
+ const top=independentBody(prompt,{...defaults,temperature:''}).body;assert.equal('temperature' in top,false);assert.equal(top.top_p,0.98);
+});
+test('the old stock preset upgrades once while deliberately blank or custom output limits survive',()=>{
+ const state=freshState();state.version='0.5.0';state.settings.api={...config,temperature:'1',maxTokens:'4096',timeout:'120'};assert.equal(validateBackup(state).settings.api.maxTokens,'12000');
+ state.settings.api.maxTokens='6000';assert.equal(validateBackup(state).settings.api.maxTokens,'6000');state.settings.api.maxTokens='';assert.equal(validateBackup(state).settings.api.maxTokens,'');
 });

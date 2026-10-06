@@ -1,14 +1,14 @@
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY } from './prompts.js';
-export const VERSION = '0.5.0';
+export const VERSION = '0.6.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
 
 export function freshState() {
     return { schema: 1, version: VERSION, social:freshSocial(), profiles: [], threads: [], logs: [], extractions: {}, selected: '', settings: {
-        includeStory: true, recentFloors: 12, storyLimit: 12000, replyTokens: 800, historyMessages: 40,
+        includeStory: true, recentFloors: 12, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', headPrompt: HEAD_PROMPT, aiPrompt: AI_PROMPT,
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
@@ -26,6 +26,11 @@ export function normalizeProfile(value, provenance = {}) {
     profile.personaMode = ['inherit','extracted','manual'].includes(value.personaMode) ? value.personaMode : provenance.personaMode || 'manual';
     const binding=value.binding ?? provenance.binding;
     profile.binding=binding && typeof binding==='object' ? {avatar:text(binding.avatar),autoBooks:binding.autoBooks===true,books:Array.isArray(binding.books)?binding.books.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[],includeDisabled:binding.includeDisabled===true} : null;
+    const supplements=value.supplementalBooks ?? provenance.supplementalBooks;
+    profile.supplementalBooks=Array.isArray(supplements)?supplements.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[];
+    // Old automatic bound-book material must not survive the opt-in supplement migration.
+    if(!Array.isArray(supplements) && profile.personaMode==='inherit') {profile.worldBefore='';profile.worldAfter='';}
+    if(profile.binding)profile.binding.autoBooks=false;
     profile.sources = Array.isArray(value.sources ?? provenance.sources) ? (value.sources ?? provenance.sources).filter(x => typeof x === 'string') : [];
     profile.sourceKey = text(provenance.sourceKey);
     return profile;
@@ -74,9 +79,9 @@ export function validateBackup(input) {
         if(profileIds.length)Object.defineProperty(out.extractions,key,{value:{fingerprint:value.fingerprint,profileIds},enumerable:true,writable:true,configurable:true});
     }
     const s = input.settings || {};
-    out.settings = { api:normalizeApi(s.api),includeStory: s.includeStory !== false,
-        recentFloors: clamp(s.recentFloors, 1, 60, 12), storyLimit: clamp(s.storyLimit, 1000, 60000, 12000),
-        replyTokens: clamp(s.replyTokens, 128, 4096, 800), historyMessages: clamp(s.historyMessages, 4, 200, 40),
+    const wasDefault=input.version!==VERSION && s.api?.maxTokens==='4096' && s.api?.timeout==='120' && !s.api?.topP && !s.api?.frequencyPenalty && !s.api?.presencePenalty && ['1',''].includes(s.api?.temperature);
+    out.settings = { api:wasDefault?apiDefaults(s.api):normalizeApi(s.api),includeStory: s.includeStory !== false,
+        recentFloors: clamp(s.recentFloors, 1, 60, 12), historyMessages: clamp(s.historyMessages, 4, 200, 40),
         intervalMinutes: clamp(s.intervalMinutes, 2, 120, 10), maxProactive: clamp(s.maxProactive, 1, 20, 3),
         activity: text(s.activity) || '待一会儿', headPrompt:typeof s.headPrompt==='string'?s.headPrompt.slice(0,30000):HEAD_PROMPT,aiPrompt:typeof s.aiPrompt==='string'?s.aiPrompt.slice(0,30000):AI_PROMPT,
         includeTags: text(s.includeTags), excludeTags: text(s.excludeTags),
@@ -272,10 +277,8 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     let prose='',memory='';
     if(settings.includeStory && thread.story?.text) {
         const source=thread.story.proseText ?? thread.story.text;
-        const limit=settings.storyLimit;
-        prose=source.slice(0,limit);
-        memory=text(thread.story.memoryText).slice(0,Math.max(0,limit-prose.length));
-        storyClipped=source.length+text(thread.story.memoryText).length>limit;
+        prose=source;
+        memory=text(thread.story.memoryText);
     }
     push('system',STORY_PROMPT+'\n\n<主线剧情记忆>\n'+memory+'\n</主线剧情记忆>\n<主线正文历史>\n'+prose+(storyClipped?'\n[记录达到发送长度限制，后续内容未提供，不要猜测。]':'')+'\n</主线正文历史>');
     const boundary=thread.messages.findIndex(m=>m.id===thread.memory?.throughId);
