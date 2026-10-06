@@ -1,0 +1,41 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const require=createRequire(import.meta.url);
+const dependency=require.resolve('happy-dom',{paths:[process.env.META_TEST_NODE_MODULES || '',path.resolve(import.meta.dirname,'..')]});
+const { Window }=await import(pathToFileURL(dependency).href);
+const base=path.resolve(import.meta.dirname,'..');
+import { readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+const window=new Window({url:'http://localhost/tests/fixture.html',width:390,height:844});
+const document=window.document;
+for(const key of ['window','document','localStorage','navigator','HTMLElement','Element']) Object.defineProperty(globalThis,key,{value:window[key]||window,configurable:true});
+globalThis.confirm=()=>true;
+const html=await readFile(path.join(base,'tests/fixture.html'),'utf8');
+document.write(html);window.eval(document.querySelector('script:not([type])').textContent);
+globalThis.SillyTavern=window.SillyTavern;globalThis.STBaiBaiBook=window.STBaiBaiBook;
+Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});
+const errors=[];const oldError=console.error;console.error=(...args)=>{errors.push(String(args[1]?.message||args[0]));};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function wait(fn,label){for(let i=0;i<300;i++){if(fn())return;await sleep(5);}throw Error('Timed out: '+label);}
+const $=s=>document.querySelector(s);const click=s=>{assert.ok($(s),'missing '+s);$(s).click();};
+const fill=(name,value)=>{assert.ok($(`[name="${name}"]`),name);$(`[name="${name}"]`).value=value;};
+const switchRole=name=>{const select=$('#mc-profile');select.value=[...select.options].find(o=>o.textContent===name).value;select.dispatchEvent(new window.Event('change'));};
+try {
+ await import(pathToFileURL(path.join(base,'index.js')).href);document.dispatchEvent(new window.Event('DOMContentLoaded'));
+ await wait(()=>$('#mc-launcher'),'initialization');click('#mc-launcher');click('[data-tab="roles"]');click('[data-action="extract"]');
+ await wait(()=>$('#mc-profile').options.length===2,'multi character extraction');assert.equal($('[name="name"]').value,'Alpha');
+ click('[data-tab="chat"]');fill('draft','我的第一条');window.mockDelay=100;click('[data-action="send"]');switchRole('Beta');
+ await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'role-switch generation');assert.ok(!$('.mc-messages').textContent.includes('我的第一条'));
+ switchRole('Alpha');assert.ok($('.mc-messages').textContent.includes('我的第一条'));assert.ok($('.mc-messages').textContent.includes('Alpha：收到'));
+ window.mockDelay=0;click('[data-tab="story"]');fill('cutoff','5');click('[data-action="freeze-story"]');await wait(()=>$('#mc-notice').textContent.includes('已固定'),'historical cutoff');
+ click('[data-action="annotate"]');await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'annotation');assert.ok($('#mc-content').textContent.includes('你们留下的批注'));
+ click('[data-tab="chat"]');fill('draft','固定进度');click('[data-action="send"]');await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'frozen send');assert.ok(!window.mockRequests.at(-1).systemPrompt.includes('主线第20条'));
+ window.failOnce=true;fill('draft','重试的消息');click('[data-action="send"]');await wait(()=>$('#mc-notice').textContent.includes('模拟网络失败'),'API error');click('[data-action="retry"]');await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'retry');assert.equal([...document.querySelectorAll('.mc-user')].filter(n=>n.textContent.includes('重试的消息')).length,1);
+ click('[data-tab="company"]');fill('activity','一起写东西');click('[data-action="start-company"]');await wait(()=>$('#mc-notice').textContent.includes('已开始'),'company start');click('[data-action="nudge"]');await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'nudge');click('[data-tab="chat"]');assert.ok($('.mc-messages').textContent.includes('主动消息'));
+ click('[data-tab="company"]');click('[data-action="stop-company"]');await wait(()=>$('#mc-notice').textContent.includes('已结束'),'company stop');fill('scene','便利店停电了');click('[data-action="theatre"]');await wait(()=>!$('#mc-status').textContent.includes('正在联系'),'theatre');assert.ok($('.mc-messages').textContent.includes('便利店停电了'));
+ click('[data-tab="settings"]');fill('customInstruction','自然一点');click('[data-action="save-settings"]');await wait(()=>$('#mc-notice').textContent.includes('已保存'),'settings');
+ const saved=JSON.parse(localStorage.getItem('meta-companion:state:'+localStorage.getItem('meta-companion:scope')));assert.equal(saved.profiles.length,2);assert.equal(saved.settings.customInstruction,'自然一点');assert.equal(saved.threads[0].story.frozen,true);assert.ok(saved.threads[0].messages.some(m=>m.text.includes('便利店停电了')));
+ globalThis.STMetaCompanion.destroy();await import(pathToFileURL(path.join(base,'index.js')).href+'?reload=1');await wait(()=>$('#mc-launcher'),'restart');click('#mc-launcher');assert.ok($('.mc-messages').textContent.includes('我的第一条'));
+ assert.deepEqual(errors,['模拟网络失败']);console.log('DOM interaction tests passed: extraction, role isolation during generation, fixed cutoff, annotations, failure/retry, accompaniment, theatre, settings and restart.');
+} finally {globalThis.STMetaCompanion?.destroy();console.error=oldError;await window.happyDOM.close();}

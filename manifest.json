@@ -1,0 +1,14 @@
+{
+  "display_name": "映间 · Meta 旁聊",
+  "description": "和角色一起观看平行世界，也可以独立聊天、开小剧场或静静陪伴。",
+  "loading_order": 120,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "恒",
+  "version": "0.1.0",
+  "homePage": "https://github.com/Tuerye-23/meta-",
+  "auto_update": false,
+  "minimum_client_version": "1.12.13"
+}

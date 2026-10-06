@@ -1,0 +1,42 @@
+#mc-root, #mc-root *, .mc-preview, .mc-preview * { box-sizing: border-box; }
+#mc-root { --mc-bg: var(--SmartThemeBlurTintColor, #242832); --mc-text: var(--SmartThemeBodyColor, #f0f1f3); --mc-line: color-mix(in srgb, var(--mc-text) 17%, transparent); --mc-soft: color-mix(in srgb, var(--mc-text) 6%, transparent); --mc-accent: #93b9d0; position: fixed; inset: 0; z-index: 30000; color: var(--mc-text); font: 14px/1.6 var(--mainFontFamily, system-ui, sans-serif); }
+#mc-root[hidden] { display:none !important; }
+#mc-launcher { position:fixed; right:max(16px,var(--tt-inset-right,env(safe-area-inset-right,0px))); bottom:calc(88px + var(--tt-inset-bottom,env(safe-area-inset-bottom,0px))); z-index:29000; width:44px; height:44px; padding:0; border:1px solid #93b9d088; border-radius:50%; background:var(--SmartThemeBlurTintColor,#242832); color:var(--SmartThemeBodyColor,#f0f1f3); box-shadow:0 3px 18px #0003; font:600 19px system-ui; cursor:pointer; }
+#mc-root .mc-backdrop { position:absolute; inset:0; background:#0004; }
+#mc-root .mc-panel { position:absolute; top:0; right:0; bottom:0; width:min(780px,100%); display:flex; flex-direction:column; background:var(--mc-bg); backdrop-filter:blur(24px); box-shadow:-8px 0 40px #0002; padding-top:var(--tt-inset-top,env(safe-area-inset-top,0px)); padding-bottom:var(--tt-inset-bottom,env(safe-area-inset-bottom,0px)); }
+#mc-root button, #mc-root input, #mc-root select, #mc-root textarea { font:inherit; color:inherit; }
+#mc-root button { border:1px solid var(--mc-line); border-radius:8px; background:var(--mc-soft); padding:6px 12px; cursor:pointer; min-height:36px; }
+#mc-root button:hover:not(:disabled) { background:color-mix(in srgb,var(--mc-accent) 18%,transparent); }
+#mc-root button:disabled { opacity:.45; cursor:default; }
+#mc-root :focus-visible { outline:2px solid var(--mc-accent); outline-offset:2px; }
+#mc-root .mc-primary { background:var(--mc-accent); color:#172c39; border-color:transparent; font-weight:600; }
+#mc-root textarea, #mc-root input:not([type="checkbox"]), #mc-root select { border:1px solid var(--mc-line); background:var(--mc-soft); border-radius:7px; padding:9px; min-width:0; width:100%; }
+#mc-root select option { background:var(--mc-bg); color:var(--mc-text); }
+#mc-root textarea { resize:vertical; line-height:1.65; }
+#mc-root .mc-header { display:flex; align-items:center; gap:12px; padding:17px 20px 10px; }
+#mc-root .mc-header>div { flex:1; } #mc-root .mc-header strong { font-size:23px; letter-spacing:3px; } #mc-root .mc-header small { display:block; font-size:11px; opacity:.6; letter-spacing:2px; }
+#mc-root .mc-version { opacity:.5; font-size:11px; } #mc-root .mc-header button { font-size:22px; padding:0 12px; }
+#mc-root .mc-top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 20px; font-size:12px; }
+#mc-root .mc-top label { display:flex; align-items:center; gap:9px; min-width:0; } #mc-root .mc-top select { max-width:210px; padding:5px; } #mc-status { opacity:.65; text-align:right; font-size:11px; }
+#mc-root .mc-nav { display:flex; gap:5px; padding:8px 20px 12px; border-bottom:1px solid var(--mc-line); }
+#mc-root .mc-nav button { flex:1; background:transparent; border-color:transparent; } #mc-root .mc-nav .mc-active { border-color:var(--mc-line); background:var(--mc-soft); color:var(--mc-accent); }
+#mc-notice { padding:9px 20px; background:color-mix(in srgb,var(--mc-accent) 12%,transparent); font-size:12px; flex-shrink:0; max-height:90px; overflow:auto; } #mc-root .mc-error { background:#9f493626; }
+#mc-content { flex:1; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+#mc-root .mc-scroll { height:100%; overflow:auto; padding:20px; overscroll-behavior:contain; }
+#mc-root .mc-chat-meta { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 20px; font-size:11px; opacity:.7; } #mc-root .mc-chat-meta button { font-size:11px; white-space:nowrap; min-height:28px; padding:3px 7px; }
+#mc-root .mc-messages { flex:1; min-height:0; overflow:auto; padding:12px 20px; overscroll-behavior:contain; }
+#mc-root .mc-message { max-width:92%; margin:0 0 16px; padding:12px 14px; border-radius:12px; background:var(--mc-soft); border:1px solid var(--mc-line); }
+#mc-root .mc-user { margin-left:auto; background:color-mix(in srgb,var(--mc-accent) 13%,transparent); } #mc-root .mc-note { max-width:100%; background:transparent; opacity:.7; font-size:12px; }
+#mc-root .mc-message header { display:flex; gap:10px; align-items:center; font-size:11px; margin-bottom:7px; } #mc-root .mc-message header strong { flex:1; } #mc-root .mc-message small { opacity:.5; } #mc-root .mc-message header button { min-height:22px; padding:0 5px; opacity:.5; border:0; background:transparent; }
+#mc-root .mc-message>div, #mc-root .mc-floor>div { white-space:pre-wrap; overflow-wrap:anywhere; }
+#mc-root .mc-compose { border-top:1px solid var(--mc-line); padding:12px 20px 16px; } #mc-root .mc-compose textarea { max-height:150px; min-height:68px; } #mc-root .mc-compose>div { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:7px; } #mc-root .mc-compose small { flex:1; opacity:.45; font-size:10px; }
+#mc-root .mc-empty { min-height:230px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; text-align:center; padding:30px; } #mc-root .mc-empty p { opacity:.65; margin:0; } #mc-root .mc-orbit { font-size:56px; line-height:1; font-weight:200; color:var(--mc-accent); }
+#mc-root .mc-field { display:flex; flex-direction:column; gap:6px; margin:0 0 16px; } #mc-root .mc-field>span { font-size:12px; opacity:.8; } #mc-root .mc-two { display:grid; grid-template-columns:1fr 1fr; gap:14px; } #mc-root .mc-check { display:flex; align-items:center; gap:8px; margin:12px 0 18px; } #mc-root input[type="checkbox"] { width:17px; height:17px; accent-color:var(--mc-accent); }
+#mc-root .mc-toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; } #mc-root .mc-inline { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } #mc-root .mc-inline input { width:85px; }
+#mc-root .mc-muted { opacity:.6; font-size:12px; } #mc-root details { margin:0 0 20px; padding:12px; border:1px solid var(--mc-line); border-radius:9px; } #mc-root summary { cursor:pointer; font-weight:600; } #mc-root details p { font-size:12px; opacity:.7; }
+#mc-root .mc-floor { padding:14px 0; border-bottom:1px solid var(--mc-line); } #mc-root .mc-floor header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; font-size:12px; opacity:.75; } #mc-root .mc-floor button { font-size:11px; } #mc-root blockquote { margin:0 0 12px; padding-left:12px; border-left:2px solid var(--mc-accent); opacity:.6; white-space:pre-wrap; }
+#mc-root pre, .mc-preview pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 monospace; }
+#mc-root hr { border:0; border-top:1px solid var(--mc-line); margin:24px 0; } #mc-root h3 { font-size:15px; margin:15px 0; }
+#mc-root .mc-company-card { text-align:center; padding:24px 0; } #mc-root .mc-company-card>strong { display:block; margin-top:15px; font-size:20px; } #mc-root .mc-company-card p { opacity:.6; } #mc-clock { font:28px/1.6 monospace; letter-spacing:3px; }
+.mc-preview { width:min(760px,92vw); max-height:85dvh; overflow:auto; color:var(--SmartThemeBodyColor,#eee); background:var(--SmartThemeBlurTintColor,#242832); border:1px solid #8885; border-radius:12px; padding:20px; z-index:31000; } .mc-preview::backdrop { background:#0008; } .mc-preview button { color:inherit; background:#8882; border:1px solid #8885; border-radius:6px; padding:8px 20px; }
+@media(max-width:600px) { #mc-root .mc-header { padding:12px 14px 5px; } #mc-root .mc-nav, #mc-root .mc-top { padding-left:14px; padding-right:14px; } #mc-root .mc-scroll, #mc-root .mc-messages { padding:14px; } #mc-root .mc-two { grid-template-columns:1fr; gap:0; } #mc-root .mc-compose { padding:10px 14px; } #mc-root .mc-compose small { display:none; } #mc-root .mc-message { max-width:96%; } #mc-root .mc-top select { max-width:150px; } #mc-root .mc-top label { font-size:11px; } #mc-status { max-width:140px; } }
