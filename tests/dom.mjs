@@ -18,7 +18,9 @@ Object.defineProperty(document,'visibilityState',{value:'visible',configurable:t
 const errors=[];const oldError=console.error;console.error=(...args)=>{errors.push(String(args[1]?.message||args[0]));};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn,label){for(let i=0;i<300;i++){if(fn())return;await sleep(5);}throw Error('Timed out: '+label);}
-const $=s=>document.querySelector(s);const click=s=>{if(s.startsWith('[data-tab=') && !$(s))$('[data-action="tab"][data-tab="home"]').click();assert.ok($(s),'missing '+s);$(s).click();};
+const $=s=>document.querySelector(s);
+const enterCurrentChat=()=>{const id=$('#mc-profile').value;const row=$(`[data-action="chat-open"][data-id="${id}"]`);if(row){row.click();return;}click('[data-action="chat-new"]');click(`[data-action="contact-open"][data-id="${id}"]`);click('[data-action="contact-chat"]');};
+const click=s=>{if(s.startsWith('[data-tab=') && !$(s))$('[data-action="tab"][data-tab="home"]').click();assert.ok($(s),'missing '+s);$(s).click();if(s==='[data-tab="chat"]')enterCurrentChat();};
 const fill=(name,value)=>{assert.ok($(`[name="${name}"]`),name);$(`[name="${name}"]`).value=value;};
 const switchRole=name=>{const select=$('#mc-profile');select.value=[...select.options].find(o=>o.textContent===name).value;select.dispatchEvent(new window.Event('change'));};
 try {

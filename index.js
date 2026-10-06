@@ -6,6 +6,7 @@ import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { definitionProfile } from './persona.js';
 import { ContactsController } from './contacts-controller.js';
 import { SocialController } from './social-controller.js';
+import { AvatarController } from './avatars.js';
 
 class Companion {
     constructor(host, store, state) {
@@ -19,7 +20,7 @@ class Companion {
             if(['APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.installQR();
             if (this.ui.open) this.render();
         });
-        this.social = new SocialController(this);this.contacts=new ContactsController(this);
+        this.social = new SocialController(this);this.contacts=new ContactsController(this);this.avatars=new AvatarController(this);
         this.visibility = () => { this.updatePresence(); this.social.tick(); };
         document.addEventListener('visibilitychange', this.visibility);
         this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
@@ -98,17 +99,20 @@ class Companion {
     }
     async reply(kind='chat', quote='', session=null, userContent=null, retry=false) {
         const {p,t}=this.current(session?.profileId || this.state.selected);
+        const state=this.state;
         await this.job(`正在等待 ${p.name}…`,async()=>{
             if(userContent!==null) {addMessage(t,'user',userContent,kind);this.ui.clearDraft(kind==='theatre'?'scene':'draft');this.render();await this.save();}
-            if(retry && t.messages[t.messages.length-1]?.role==='assistant') {removeMessage(t,t.messages[t.messages.length-1].id);await this.save();}
+            if(kind==='poke' && !retry){addMessage(t,'note',`${p.userName || '你'} 戳了戳 ${p.name}。`,'poke');this.render();await this.save();}
+            const replaced=retry && t.messages[t.messages.length-1]?.role==='assistant'?t.messages[t.messages.length-1]:null;
             await this.refreshProfile(p);
             await this.refreshStory(p,t);
-            const request=this.request(p,t,kind,quote);
+            const request=this.request(p,replaced?{...t,messages:t.messages.filter(m=>m.id!==replaced.id)}:t,kind,quote);
             const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,onText:content=>{this.ui.pendingReply={profileId:p.id,text:content};this.ui.streamText(p.id,content);}},this.state.settings.api);
             this.ui.pendingReply=null;
+            if(this.disposed || this.state!==state || !state.profiles.some(person=>person.id===p.id))return;
             if (session && this.session!==session) return;
             if (kind==='annotation') t.annotations.push({quote,reply,label:t.story?.label || '',createdAt:Date.now()});
-            else addMessage(t,'assistant',reply,kind);
+            else {if(replaced)removeMessage(t,replaced.id);addMessage(t,'assistant',reply,kind);}
             this.render();
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');
             if(kind!=='annotation' && this.state.settings.autoSummary && summaryBatch(t,this.state.settings,true).length) {
@@ -133,7 +137,7 @@ class Companion {
             const oldIds=cached?.profileIds.filter(id=>this.state.profiles.some(p=>p.id===id)) || [];
             // Older extracted/manual contacts retain their persona and conversations.
             if(oldIds.length && oldIds.every(id=>this.state.profiles.find(p=>p.id===id).personaMode!=='inherit')) {
-                if(switched){this.state.selected=oldIds[0];this.updatePresence();}
+                if(switched && !(this.ui.tab==='chat' && this.ui.chatPage==='thread')){this.state.selected=oldIds[0];this.updatePresence();}
             } else {
                 const ids=[];
                 for(const card of data.cards) {
@@ -145,7 +149,7 @@ class Companion {
                     ids.push(p.id);
                 }
                 Object.defineProperty(this.state.extractions,data.originKey,{value:{fingerprint:data.fingerprint,profileIds:ids},enumerable:true,writable:true,configurable:true});
-                if((switched || !this.state.selected) && ids.length)this.state.selected=ids[0];
+                if((switched && !(this.ui.tab==='chat' && this.ui.chatPage==='thread') || !this.state.selected) && ids.length)this.state.selected=ids[0];
             }
             await this.save();this.render();this.updatePresence();this.queueStorySync();
         } catch(error) {
@@ -197,20 +201,33 @@ class Companion {
         try {
             if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
-            if(name==='back'){if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
+            if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && this.ui.contactPage==='detail' && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
+            if(name==='social-avatar'){this.avatars.open('user');return;}
+            if(name.startsWith('avatar-') && await this.avatars.handle(name,args))return;
+            if(name==='chat-settings'){this.ui.capture();this.ui.editorId=args.id || this.state.selected;this.ui.contactPage='detail';this.ui.contactReturn='chat';this.ui.tab='roles';this.ui.chatTools=false;this.render();return;}
+            if(name==='chat-new'){await this.action('tab',{tab:'roles'});return;}
             if(((name.startsWith('contact-') && name!=='contact-chat') || name==='save-supplements') && await this.contacts.handle(name,args))return;
-            if(name==='tab') {this.ui.capture();this.ui.socialSheet='';this.ui.commentTarget='';this.ui.tab=args.tab;if(args.tab==='roles'){this.ui.contactPage='list';this.ui.editorId='';}this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
-            if(name==='contact-chat'){this.ui.capture();this.state.selected=args.id;this.ui.tab='chat';this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
+            if(name==='tab') {this.ui.capture();this.ui.avatarTarget=null;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.contactReturn='';this.ui.tab=args.tab;if(args.tab==='chat'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}if(args.tab==='roles'){this.ui.contactPage='list';this.ui.editorId='';}this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
+            if(name==='contact-chat' || name==='chat-open'){if(!this.state.profiles.some(p=>p.id===args.id))throw new Error('联系人已不存在。');this.ui.capture();this.state.selected=args.id;this.ui.tab='chat';this.ui.chatPage='thread';this.ui.chatTools=false;this.ui.emojiOpen=false;this.ui.contactReturn='';this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
+            if(name==='chat-plus'){this.ui.capture();this.ui.chatTools=!this.ui.chatTools;this.ui.emojiOpen=false;this.render();return;}
+            if(name==='chat-emoji'){const draft=this.ui.content.querySelector('#mc-draft');if(draft){const start=draft.selectionStart ?? draft.value.length,end=draft.selectionEnd ?? start;draft.value=draft.value.slice(0,start)+args.value+draft.value.slice(end);draft.focus();draft.setSelectionRange(start+args.value.length,start+args.value.length);this.ui.capture();this.ui.sizeComposer();}return;}
             if(name==='select') {this.ui.capture();this.state.selected=args.id;if(this.ui.tab==='settings'){const memory=this.ui.content.querySelector('[name="memory"]');if(memory)memory.value=this.current().t.memory?.text || '';const selected=this.ui.content.querySelector('[name="summaryProfile"]');if(selected)selected.value=args.id;}this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
             if(name==='refresh-regex') {await this.loadStoryControls(this.ui.values().memoryBook);this.ui.notice('已同步当前启用的正则，选择正文项目后保存。');return;}
             if(name==='clear-logs'){this.state.logs=[];await this.save();this.render();return;}
             if(name==='export-logs'){this.download('映间后台日志.json',this.state.logs);return;}
             if(name==='memory-book') {this.ui.capture();this.ui.entries=await this.host.memoryEntries(args.book);this.ui.entryBook=args.book;const d=this.ui.drafts.get(this.ui.previous);if(d)d.memoryEntry='';this.render();return;}
-            if(name==='preview') {const{p,t}=this.current();if(!this.busy){await this.refreshProfile(p);await this.refreshStory(p,t);}const temporary={...t,messages:[...t.messages]};const draft=this.ui.values().draft?.trim();if(draft)addMessage(temporary,'user',draft);this.ui.preview(this.request(p,temporary));return;}
+            if(name==='preview') {this.ui.capture();const{p,t}=this.current(args.id || this.state.selected);if(!this.busy){await this.refreshProfile(p);await this.refreshStory(p,t);}const temporary={...t,messages:[...t.messages]};const draft=this.ui.chatDraft(p.id).trim();if(draft)addMessage(temporary,'user',draft);this.ui.preview(this.request(p,temporary));return;}
             if(name==='export') {await this.store.queue;const backup=JSON.parse(JSON.stringify(this.state));if(backup.settings.api)backup.settings.api.apiKey='';const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
             if(/^(moment-|diary-|social-|save-(moment|diary)-settings$)/.test(name) && await this.social.handle(name,args))return;
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
+            if(name==='chat-tool'){
+                if(['transfer','photo','voice'].includes(args.tool)){this.ui.notice(({transfer:'转账',photo:'照片',voice:'语音'})[args.tool]+'入口已预留，暂未开放。');return;}
+                if(args.tool==='emoji'){this.ui.capture();this.ui.emojiOpen=!this.ui.emojiOpen;this.render();return;}
+                this.ui.capture();this.ui.chatTools=false;this.ui.emojiOpen=false;
+                if(args.tool==='company'){this.ui.tab='company';this.render();return;}
+                if(args.tool==='poke'){this.render();await this.reply('poke');return;}
+            }
             if(name==='api-defaults') {this.ui.applyApiDefaults();this.ui.notice('已恢复默认参数，保存后生效。');return;}
             if(name==='save-api') {
                 const value=this.ui.apiValues();const api=value.mode==='independent'?validateApi(value).api:normalizeApi(value);
@@ -224,7 +241,7 @@ class Companion {
                 await this.job('正在测试独立 API…',async()=>{await this.host.generate({systemPrompt:'这是连接测试，请只回复 OK。',prompt:[{role:'user',content:'OK'}]},api);this.ui.notice('连接成功，模型已返回文字。测试使用的是当前填写的配置；需要点击保存才能用于聊天。');});return;
             }
             if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.ui.editorId=p.id;this.ui.contactPage='field';this.ui.contactField='name';if(!this.state.selected)this.state.selected=p.id;await this.save();this.render();this.queueStorySync();return;}
-            if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.momentPhotos=[];await this.save();this.ui.drafts.clear();this.ui.sourceDraft={cards:[],personaBook:'',personaEntries:[]};this.ui.contactPage='list';this.ui.editorId='';this.ui.contactCandidates=[];this.contacts.revision++;this.contacts.recognition=null;this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
+            if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.momentPhotos=[];this.ui.avatarTarget=null;this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;this.ui.contactReturn='';await this.save();this.ui.drafts.clear();this.ui.sourceDraft={cards:[],personaBook:'',personaEntries:[]};this.ui.contactPage='list';this.ui.editorId='';this.ui.contactCandidates=[];this.contacts.revision++;this.contacts.recognition=null;this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
             if(name==='save-settings') {const v=this.ui.values();const s=this.state.settings;Object.assign(s,{includeStory:Boolean(v.includeStory),recentFloors:clamp(v.recentFloors,1,60,12),historyMessages:clamp(v.historyMessages,4,200,40),});this.ui.resetDraft(['includeStory','recentFloors','historyMessages']);await this.save();this.render();this.queueStorySync();this.ui.notice('设置已保存。');return;}
             if(name==='save-story-settings') {
                 const v=this.ui.values();tagNames(v.includeTags);tagNames(v.excludeTags);
@@ -237,14 +254,14 @@ class Companion {
             if(name==='reset-prompts'){for(const [key,value] of [['headPrompt',HEAD_PROMPT],['aiPrompt',AI_PROMPT]]){const input=this.ui.content.querySelector(`[name="${key}"]`);if(input)input.value=value;}this.ui.capture();this.ui.notice('已填入默认提示词，保存后生效。');return;}
             const{p,t}=this.current(this.ui.tab==='roles' && ['save-profile','delete-profile'].includes(name)?this.ui.editorId:this.state.selected); const v=this.ui.values();
             if(name==='save-profile') {if(!String(v.name ?? p.name).trim())throw new Error('请填写角色姓名。');const mode=(v.personaMode ?? p.personaMode)==='inherit'?'inherit':'manual';if(mode==='inherit' && !p.binding)throw new Error('请先从角色卡或条目建立设定来源。');const changed={...normalizeProfile({...p,...v,personaMode:mode},p),id:p.id,manuallyEdited:true};await this.refreshProfile(changed);Object.assign(p,changed);this.ui.resetDraft();await this.save();this.ui.contactPage='detail';this.render();this.ui.notice('角色资料已保存。');return;}
-            if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);for(const key of ['momentRoles','momentCommentRoles','diaryRoles','diaryCommentRoles'])this.state.social.settings[key]=this.state.social.settings[key].filter(id=>id!==p.id);for(const key of Object.keys(this.state.social.schedules))if(key.endsWith(':'+p.id))delete this.state.social.schedules[key];if(this.state.selected===p.id)this.state.selected=this.state.profiles[0]?.id || '';this.ui.contactPage='list';this.ui.editorId='';await this.save();this.render();return;}
+            if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);for(const key of ['momentRoles','momentCommentRoles','diaryRoles','diaryCommentRoles'])this.state.social.settings[key]=this.state.social.settings[key].filter(id=>id!==p.id);for(const key of Object.keys(this.state.social.schedules))if(key.endsWith(':'+p.id))delete this.state.social.schedules[key];if(this.state.selected===p.id)this.state.selected=this.state.profiles[0]?.id || '';this.ui.contactPage='list';this.ui.editorId='';this.ui.contactReturn='';await this.save();this.render();return;}
             if(name==='save-memory') {t.memory.text=v.memory || '';if(!t.memory.text)t.memory.throughId='';this.ui.resetDraft(['memory']);await this.save();this.render();this.ui.notice('记忆已保存。');return;}
             if(name==='summarize') {await this.summarize();return;}
             if(name==='delete-message') {if(!confirm('删除这条 meta 消息？涉及已整理内容时会清空对应摘要，之后可重新整理。'))return;removeMessage(t,args.id);await this.save();this.render();return;}
             if(name==='annotate') {const floor=t.story?.floors.find(f=>f.index===Number(args.index));if(!floor)throw new Error('这段正文已不在当前观看记录中。');await this.reply('annotation',floor.body);return;}
             if(name==='send') {if(!v.draft?.trim())return;await this.reply('chat','',null,v.draft.trim());return;}
-            if(name==='retry') {if(!t.messages.length)throw new Error('先发一条消息。');await this.reply('chat','',null,null,true);return;}
-            if(name==='theatre') {if(!v.scene?.trim())throw new Error('先给小剧场写一个场景。');const scene=v.scene.trim();this.ui.clearDraft('scene');this.ui.tab='chat';await this.reply('theatre','',null,`[Meta 小剧场]\n我们在这里演一段独立的小场景：${scene}\n保持双方人设与关系，你开始。`);return;}
+            if(name==='retry') {if(!t.messages.length)throw new Error('先发一条消息。');const last=t.messages[t.messages.length-1];await this.reply(['poke','proactive','theatre'].includes(last.kind)?last.kind:'chat','',null,null,true);return;}
+            if(name==='theatre') {if(!v.scene?.trim())throw new Error('先给小剧场写一个场景。');const scene=v.scene.trim();this.ui.clearDraft('scene');this.ui.tab='chat';this.ui.chatPage='thread';await this.reply('theatre','',null,`[Meta 小剧场]\n我们在这里演一段独立的小场景：${scene}\n保持双方人设与关系，你开始。`);return;}
             if(name==='start-company') {if(this.session)await this.action('stop-company');const s=this.state.settings;s.activity=v.activity?.trim() || '待一会儿';s.intervalMinutes=clamp(v.intervalMinutes,2,120,10);s.maxProactive=clamp(v.maxProactive,1,20,3);this.session={id:uid(),profileId:p.id,activity:s.activity,interval:s.intervalMinutes*60000,max:s.maxProactive,count:0,elapsed:0,runningSince:0,nextAt:0};addMessage(t,'note',`开始一起${s.activity}。`);this.updatePresence();await this.save();this.render();this.ui.notice('已开始陪伴。你可以切到聊天页随时说话。');return;}
             if(name==='nudge') {await this.reply('proactive');return;}
         } catch(error) {console.error('[映间]',error);this.log(name+' · '+(error?.message || String(error)),'error');await this.save();this.ui.notice(error?.message || String(error),true);this.render();}

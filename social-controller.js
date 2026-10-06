@@ -1,16 +1,9 @@
 import { clamp, literalMacros } from './core.js';
 import { SOCIAL_PROMPTS, collectionFor, createEntry, createComment, generationCount, reserveSchedules, nextSocialTask, finishSocialTask } from './social.js';
 
-// Resize locally before persistence; never upload the selected image to an API.
-export async function readLocalImage(file, size=1440) {
-    if(!file || !/^image\/(jpeg|png|webp)$/.test(file.type))throw new Error('请选择 JPG、PNG 或 WebP 图片。');
-    if(file.size>12*1024*1024)throw new Error('请选择小于 12 MB 的图片。');
-    const source=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('图片读取失败。'));reader.readAsDataURL(file);});
-    const img=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('图片无法解码。'));img.src=source;});
-    const scale=Math.min(1,size/img.width,size/img.height);const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
-    const ctx=canvas.getContext('2d');if(!ctx)throw new Error('当前环境无法处理图片。');ctx.drawImage(img,0,0,canvas.width,canvas.height);
-    const result=canvas.toDataURL('image/jpeg',0.82);if(result.length>1600000)throw new Error('处理后的图片仍过大，请换一张较小的图片。');return result;
-}
+import { readLocalImage } from './images.js';
+export { readLocalImage } from './images.js';
+
 export class SocialController {
     constructor(app){this.app=app;this.checking=false;reserveSchedules(app.state.social);this.timer=setInterval(()=>this.tick(),30000);}
     destroy(){clearInterval(this.timer);}

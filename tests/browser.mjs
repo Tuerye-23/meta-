@@ -15,7 +15,9 @@ const artifacts=path.resolve(base,'..','.test-output');await mkdir(artifacts,{re
 try {
   for(const viewport of [{width:1280,height:800},{width:390,height:844},{width:320,height:650}]) {
     const ctx=await browser.newContext({viewport});const page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
-    const go=async tab=>{await page.locator('.mc-home-button').click();await page.locator(`.mc-app[data-tab="${tab}"]`).click();};
+    const enterChat=async(name=null)=>{const id=name?await page.locator('#mc-profile option').filter({hasText:name}).getAttribute('value'):await page.locator('#mc-profile').inputValue();const row=page.locator(`[data-action="chat-open"][data-id="${id}"]`);if(await row.count()){await row.click();return;}await page.locator('[data-action="chat-new"]').first().click();await page.locator(`[data-action="contact-open"][data-id="${id}"]`).click();await page.locator('[data-action="contact-chat"]').click();};
+    const go=async tab=>{await page.locator('.mc-home-button').click();await page.locator(`.mc-app[data-tab="${tab}"]`).click();if(tab==='chat')await enterChat();};
+    const switchChat=async name=>{await page.locator('.mc-home-button').click();await page.locator('.mc-app[data-tab="chat"]').click();await enterChat(name);};
     const font=process.env.META_FONT_FILE?(await readFile(process.env.META_FONT_FILE)).toString('base64'):'';
     const injectFont=async()=>{if(font){await page.addStyleTag({content:`@font-face{font-family:MetaTestCJK;src:url(data:font/woff2;base64,${font})}#mc-root{font-family:MetaTestCJK,system-ui!important}`});await page.evaluate(()=>document.fonts.ready);}};
     await page.goto(url);await injectFont();await page.locator('#mc-wand-button').click();
@@ -45,11 +47,11 @@ try {
     await go('story');await page.locator('details summary').first().click();await page.evaluate(()=>window.mockEmit('MESSAGE_EDITED'));await page.waitForTimeout(450);assert.equal(await page.locator('details').first().evaluate(el=>el.open),false,'expanded sections must stay unchanged');
 
     await go('chat');await page.locator('#mc-draft').fill('第一条私人消息');
-    await page.locator('[data-action="preview"]').click();await page.locator('.mc-preview').waitFor();assert.match(await page.locator('.mc-preview pre').textContent(),/第一条私人消息/);await page.locator('.mc-preview button').click();
+    await page.locator('#mc-chat-title').click();await page.locator('[data-action="preview"]').click();await page.locator('.mc-preview').waitFor();assert.match(await page.locator('.mc-preview pre').textContent(),/第一条私人消息/);await page.locator('.mc-preview button').click();await page.locator('.mc-back').click();
     await page.evaluate(()=>window.mockDelay=350);await page.locator('[data-action="send"]').click();
-    await page.locator('#mc-profile').selectOption({label:'Beta'});await page.waitForTimeout(500);
+    await switchChat('Beta');await page.waitForTimeout(500);
     assert.doesNotMatch(await page.locator('.mc-messages').textContent(),/第一条私人消息/);
-    await page.locator('#mc-profile').selectOption({label:'Alpha'});assert.match(await page.locator('.mc-messages').textContent(),/第一条私人消息/);assert.match(await page.locator('.mc-messages').textContent(),/Alpha：收到/);
+    await switchChat('Alpha');assert.match(await page.locator('.mc-messages').textContent(),/第一条私人消息/);assert.match(await page.locator('.mc-messages').textContent(),/Alpha：收到/);
     await page.evaluate(()=>window.mockDelay=0);await go('story');
     assert.equal(await page.locator('[name="cutoff"]').count(),0);
     if(!await page.locator('details').first().evaluate(el=>el.open))await page.locator('details summary').first().click();
@@ -108,7 +110,7 @@ try {
     // Supplement books/entries are opt-in and survive source updates.
     await page.locator('[data-action="contact-open"]').filter({hasText:'Alpha'}).click();await page.locator('[data-action="contact-supplements"]').click();await page.locator('[data-action="contact-picker"][data-kind="supplements"]').click();await page.locator('[data-action="contact-picker-toggle"][data-id="测试世界"]').click();await page.locator('[data-action="contact-picker-done"]').click();
     await page.locator('[data-action="contact-picker"][data-kind="supplementEntries"]').click();await page.locator('[data-action="contact-picker-all"]').click();await page.locator('[data-action="contact-picker-toggle"][data-id="0"]').click();await page.locator('[data-action="contact-picker-done"]').click();await page.locator('[data-action="save-supplements"]').click();await page.waitForFunction(()=>document.getElementById('mc-notice').textContent.includes('补充设定已保存'));
-    await page.evaluate(()=>window.mockEmit('WORLDINFO_UPDATED'));await page.waitForTimeout(450);await go('chat');await page.locator('#mc-profile').selectOption({label:'Alpha'});await page.locator('#mc-draft').fill('检查补充设定');await page.locator('[data-action="send"]').click();await page.waitForFunction(()=>!document.getElementById('mc-status').textContent.includes('正在输入'));
+    await page.evaluate(()=>window.mockEmit('WORLDINFO_UPDATED'));await page.waitForTimeout(450);await go('chat');await switchChat('Alpha');await page.locator('#mc-draft').fill('检查补充设定');await page.locator('[data-action="send"]').click();await page.waitForFunction(()=>!document.getElementById('mc-status').textContent.includes('正在输入'));
     const supplemental=await page.evaluate(()=>window.mockRequests.at(-1).prompt.map(m=>m.content).join('\n'));assert.match(supplemental,/城市背景/);assert.doesNotMatch(supplemental,/公共交通停止|开朗的记者/);
     await go('settings');await page.locator('[data-section="api"]').evaluate(el=>el.open=true);await page.locator('[name="apiMode"]').selectOption('independent');await page.locator('[name="apiProvider"]').selectOption('openai');await page.locator('[name="apiStream"]').check();await page.locator('[data-action="save-api"]').click();await page.waitForFunction(()=>document.getElementById('mc-notice').textContent.includes('独立 API 配置已保存'));
     await page.evaluate(()=>{
@@ -129,7 +131,7 @@ try {
       const ui=new Interface(createHost(),()=>{});ui.show();ui.tab='settings';ui.render(state);
       ui.content.querySelector('[data-section="prompts"]').open=true;let scroller=ui.content.querySelector('.mc-scroll');scroller.scrollTop=350;const settingsTop=scroller.scrollTop;const editor=ui.content.querySelector('[name="headPrompt"]');editor.value='未保存内容';editor.focus({preventScroll:true});editor.setSelectionRange(1,3);
       ui.render(state,true);const settings={top:ui.content.querySelector('.mc-scroll').scrollTop,value:ui.values().headPrompt,focused:document.activeElement.name,start:document.activeElement.selectionStart};
-      ui.tab='chat';ui.render(state);scroller=ui.content.querySelector('.mc-messages');scroller.scrollTop=80;const chatTop=scroller.scrollTop;addMessage(t,'assistant','后台到来的新消息');ui.render(state);const readingTop=ui.content.querySelector('.mc-messages').scrollTop;
+      ui.tab='chat';ui.chatPage='thread';ui.render(state);scroller=ui.content.querySelector('.mc-messages');scroller.scrollTop=80;const chatTop=scroller.scrollTop;addMessage(t,'assistant','后台到来的新消息');ui.render(state);const readingTop=ui.content.querySelector('.mc-messages').scrollTop;
       scroller=ui.content.querySelector('.mc-messages');scroller.scrollTop=scroller.scrollHeight;addMessage(t,'assistant','末尾新消息');ui.render(state);scroller=ui.content.querySelector('.mc-messages');const bottomGap=scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop;
       ui.destroy();return {settingsTop,settings,chatTop,readingTop,bottomGap};
     });

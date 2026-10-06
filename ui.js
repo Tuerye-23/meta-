@@ -2,6 +2,8 @@ import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
 import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { contactsScreen, contactTitle } from './contacts-ui.js';
 import { VERSION } from './core.js';
+import { chatScreen, chatMessage } from './chat-ui.js';
+import { avatarScreen } from './avatars.js';
 import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -10,11 +12,12 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
+        this.chatPage='list';this.chatTools=false;this.emojiOpen=false;this.contactReturn='';this.avatarTarget=null;this.avatarSerial=0;
         this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];this.sourceDraft={cards:[],personaBook:"",personaEntries:[]};this.contactPage="list";this.editorId="";this.contactField="";this.contactSource="card";this.contactCandidates=[];this.candidateSelection=[];this.supplementDraft=[];this.pickerSelection=[];this.pickerEntries=[];this.pickerKind="";
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
-            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><button type="button" id="mc-chat-title" data-action="chat-settings" hidden></button><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
             <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
             <button type="button" class="mc-home-button" data-action="tab" data-tab="home" aria-label="返回手机首页"><span></span></button>
@@ -26,7 +29,8 @@ export class Interface {
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
         root.addEventListener('change', event => {if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
-        root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();});
+        root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();});
+        root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
             if (!this.open) return;
@@ -110,18 +114,22 @@ export class Interface {
         const temperature=this.content.querySelector('[name="apiTemperature"]');if(temperature)temperature.max=claude?'1':'2';
     }
     filterContacts() {const query=(this.content.querySelector('[name="contactSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-contact-name]'))row.hidden=!row.dataset.contactName.includes(query);}
+    filterMessages() {const query=(this.content.querySelector('[name="messageSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-message-search]'))row.hidden=!row.dataset.messageSearch.includes(query);}
+    sizeComposer() {const el=this.content.querySelector('#mc-draft');if(el){el.style.height='44px';el.style.height=Math.max(44,Math.min(112,el.scrollHeight))+'px';}}
     streamText(profileId,content) {
-        if(this.tab!=='chat' || this.chatProfile!==profileId)return;
+        if(this.tab!=='chat' || this.chatPage!=='thread' || this.avatarTarget || this.chatProfile!==profileId)return;
         const list=this.content.querySelector('.mc-messages');if(!list)return;
         const follow=list.scrollHeight-list.clientHeight-list.scrollTop<32;
         let bubble=list.querySelector('.mc-streaming');
-        if(!bubble){list.querySelector('.mc-empty')?.remove();bubble=document.createElement('article');bubble.className='mc-message mc-assistant mc-streaming';const header=document.createElement('header');header.textContent='正在回复…';const body=document.createElement('div');bubble.append(header,body);list.append(bubble);}
-        bubble.lastElementChild.textContent=content;if(follow)list.scrollTop=list.scrollHeight;
+        if(!bubble){list.querySelector('.mc-empty')?.remove();const holder=document.createElement('div');holder.innerHTML=chatMessage({id:'stream',role:'assistant',text:'',createdAt:Date.now()},this.renderState.profiles.find(p=>p.id===profileId),this.renderState);bubble=holder.firstElementChild;bubble.classList.add('mc-streaming');bubble.querySelector('[data-action="delete-message"]')?.remove();list.append(bubble);}
+        bubble.querySelector('.mc-message-text').textContent=content;if(follow)list.scrollTop=list.scrollHeight;
     }
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
+    chatDraft(profileId) {return this.drafts.get(`chat:${profileId}:thread::`)?.draft || '';}
     render(state, busy = false, session = null) {
+        this.renderState=state;
         this.capture(); this.snapshotView();
-        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary','settings','roles'].includes(this.tab)?'global':state.selected}:${this.tab==='diary'?this.diaryTab:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}:${this.tab==='roles'?this.contactPage+':'+this.editorId+':'+this.contactField+':'+this.pickerKind:''}`; let markup='';
+        const oldKey=this.viewKey; const newKey=this.avatarTarget?`avatar:${this.avatarTarget.kind}:${this.avatarTarget.id}:${this.avatarSerial}`:`${this.tab}:${['home','moments','diary','settings','roles'].includes(this.tab) || this.tab==='chat' && this.chatPage==='list'?'global':state.selected}:${this.tab==='diary'?this.diaryTab:this.tab==='chat'?this.chatPage:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}:${this.tab==='roles'?this.contactPage+':'+this.editorId+':'+this.contactField+':'+this.pickerKind:''}`; let markup='';
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;
@@ -129,19 +137,23 @@ export class Interface {
         this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
         this.root.querySelector('.mc-panel').dataset.screen=this.tab;
-        this.root.querySelector('.mc-top').hidden=!['chat','story','company'].includes(this.tab);
+        this.root.querySelector('.mc-top').hidden=this.avatarTarget || !['story','company'].includes(this.tab);
         this.root.querySelector('.mc-back').hidden=this.tab==='home';
         this.root.querySelector('#mc-app-title').textContent=this.tab==='roles'?contactTitle(this):this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
+        const threadOpen=this.tab==='chat' && this.chatPage==='thread' && p && !this.avatarTarget;
+        this.root.querySelector('#mc-app-title').hidden=Boolean(threadOpen);
+        this.root.querySelector('#mc-chat-title').hidden=!threadOpen;
+        this.root.querySelector('#mc-chat-title').textContent=p?.name || '';this.root.querySelector('#mc-chat-title').setAttribute('aria-label',`设置 ${p?.name || '联系人'}`);
+        if(this.avatarTarget)this.root.querySelector('#mc-app-title').textContent='更换头像';
+        this.root.querySelector('.mc-back').hidden=this.tab==='home' && !this.avatarTarget;
+        this.root.querySelector('.mc-back').setAttribute('aria-label',threadOpen?'返回消息列表':'返回上一页');
         this.chatProfile=state.selected;
         const c = this.host.context(); const s = state.settings;
         const disabled = busy ? 'disabled' : '';const api=normalizeApi(s.api);
         if (this.tab === 'home') markup=homeScreen();
         if (this.tab === 'moments') markup=momentsScreen(state,this,c.name1,busy);
         if (this.tab === 'diary') markup=diaryScreen(state,this,busy);
-        if (this.tab === 'chat') markup = p ? `
-            <div class="mc-chat-meta"><span>${s.includeStory ? '主线自动同步 · '+esc(t?.story?.label || '等待正文') : '独立 Meta 对话'}</span><button type="button" data-action="preview" aria-label="查看本次发送内容">发送预览</button></div>
-            <div class="mc-messages" aria-live="polite">${(t?.messages || []).slice(-200).map(m => `<article class="mc-message mc-${m.role}"><header><strong>${esc(m.role === 'user' ? p.userName || '你' : m.role === 'note' ? '记录' : p.name)}</strong><small>${esc(m.kind === 'proactive' ? '主动消息' : m.kind === 'theatre' ? '小剧场' : '')} ${new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><button type="button" data-action="delete-message" data-id="${esc(m.id)}" aria-label="删除这条消息">×</button></header><div>${esc(m.text)}</div></article>`).join('') || `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>和 ${esc(p.name)} 聊几句</strong><p>可以一起看故事，也可以从今天过得怎么样聊起。<br>关系沿用角色设定。</p></div>`}</div>
-            <form class="mc-compose"><textarea id="mc-draft" name="draft" rows="3" placeholder="想和 ${esc(p.name)} 说什么？" aria-label="消息内容"></textarea><div><small>Ctrl / ⌘ + Enter 发送</small><button type="button" data-action="retry" ${disabled}>重试回复</button><button type="button" class="mc-primary" data-action="send" ${disabled}>发送</button></div></form>` : `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>先认识一个人</strong><p>选择角色卡、世界书，或者手动写一份角色资料。</p><button type="button" class="mc-primary" data-action="tab" data-tab="roles">添加角色</button></div>`;
+        if (this.tab === 'chat') markup=chatScreen(state,this,busy);
         if (this.tab === 'roles') markup=contactsScreen(state,this,c,busy);
         if (this.tab === 'story') markup = `<div class="mc-scroll"><div class="mc-section-title"><span>共同观看</span><small>自动跟随最新正文</small></div><p class="mc-muted">${esc(t?.story?.label || '等待当前主线出现正文')}</p>
           <details open><summary>正文读取范围</summary><p>只读所选标签，或排除不想读的内容。正文标签和正则筛选作用于角色回复，用户消息保留。</p>
@@ -187,6 +199,7 @@ export class Interface {
           <label class="mc-field"><span>查看哪位联系人的记忆</span><select name="summaryProfile">${state.profiles.map(p=>`<option value="${esc(p.id)}" ${p.id===state.selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
           ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p>` : ''}
           ${settingEnd}${settingStart('prompts','提示词设置','头部与 AI 提示词','prompts')}<div class="mc-prompt-label"><strong>头部提示词</strong><small>系统 · 相对位置</small></div>${field('','headPrompt',s.headPrompt ?? HEAD_PROMPT,7)}<div class="mc-prompt-label"><strong>AI提示词</strong><small>模型 · 相对位置</small></div>${field('','aiPrompt',s.aiPrompt ?? AI_PROMPT,8)}<div class="mc-toolbar"><button type="button" class="mc-primary" data-action="save-prompts" ${disabled}>保存提示词</button><button type="button" data-action="reset-prompts" ${disabled}>恢复默认</button></div>${settingEnd}${settingStart('backup','备份及后台日志','保存资料，查看运行情况','backup')}<h3>备份</h3><p>资料和 meta 对话保存在当前设备。换设备时导出备份，再导入。</p><div class="mc-toolbar"><button type="button" data-action="export">导出完整备份</button><button type="button" data-action="import" ${disabled}>导入备份</button></div><h3>后台日志</h3><p class="mc-muted">保留最近 200 条运行记录。这里只记录任务与错误，不记录聊天正文及密钥。</p><div class="mc-log-list" aria-label="后台运行日志">${(state.logs || []).slice(-50).reverse().map(l=>`<article class="mc-log ${l.level==='error'?'mc-log-error':''}"><small>${esc(new Date(l.createdAt).toLocaleString('zh-CN'))} · ${l.level==='error'?'失败':'运行'}</small><span>${esc(l.message)}</span></article>`).join('') || '<p class="mc-muted">还没有运行记录</p>'}</div><div class="mc-toolbar"><button type="button" data-action="export-logs">导出日志</button><button type="button" data-action="clear-logs" ${disabled}>清空日志</button></div>${settingEnd}<p class="mc-settings-version">映间 v${VERSION}</p></div>`;
+        if(this.avatarTarget)markup=avatarScreen(this,busy);
         const replaced=oldKey!==newKey || this.lastMarkup!==markup;
         if(replaced)this.content.innerHTML=markup;
         this.lastMarkup=markup;this.viewKey=newKey;
@@ -199,7 +212,7 @@ export class Interface {
             else n.value = saved[n.name];
         }
 
-        this.apiVisibility();this.homeClock();this.filterContacts();
+        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];

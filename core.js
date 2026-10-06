@@ -1,7 +1,8 @@
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
-import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY } from './prompts.js';
-export const VERSION = '0.6.1';
+import { avatarSource } from './images.js';
+import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT } from './prompts.js';
+export const VERSION = '0.7.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -24,6 +25,7 @@ export function normalizeProfile(value, provenance = {}) {
         profile[key] = text(value[key] ?? provenance[key]).slice(0, key === 'sourceText' ? 170000 : 50000);
     }
     profile.personaMode = ['inherit','extracted','manual'].includes(value.personaMode) ? value.personaMode : provenance.personaMode || 'manual';
+    profile.avatarImage=avatarSource(value.avatarImage ?? provenance.avatarImage);
     const binding=value.binding ?? provenance.binding;
     profile.binding=binding && typeof binding==='object' ? {avatar:text(binding.avatar),autoBooks:binding.autoBooks===true,books:Array.isArray(binding.books)?binding.books.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[],includeDisabled:binding.includeDisabled===true} : null;
     const supplements=value.supplementalBooks ?? provenance.supplementalBooks;
@@ -291,6 +293,7 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     if(kind==='proactive')push('user','[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。');
     if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
     push('system',POST_HISTORY);
+    if(kind==='poke')push('system',POKE_PROMPT);
     return {systemPrompt:bind(settings.headPrompt ?? HEAD_PROMPT),prompt:messages,omitted:all.length-selected.length,storyClipped};
 }
 

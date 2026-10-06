@@ -1,4 +1,5 @@
 // These author-supplied prompts intentionally remain empty until the next update.
+import { avatarSource } from './images.js';
 // They are not part of user settings or imported backups.
 export const SOCIAL_PROMPTS = { moment: '', momentComment: '', diary: '', diaryComment: '' };
 const string = (v, limit=20000) => typeof v === 'string' ? v.slice(0,limit) : '';
@@ -14,7 +15,7 @@ export function normalizeSocial(input, profileIds) {
     const out=freshSocial(); if(!input || typeof input!=='object')return out;
     const ids=new Set(profileIds);const s=input.settings || {};
     for(const k of ['userName','status'])out[k]=string(input[k],k==='status'?80:160);
-    for(const k of ['avatar','cover'])out[k]=imageData(input[k]);
+    out.avatar=avatarSource(input.avatar);out.cover=imageData(input.cover);
     for(const k of ['momentRoles','momentCommentRoles','diaryRoles','diaryCommentRoles'])out.settings[k]=Array.isArray(s[k])?[...new Set(s[k].filter(v=>ids.has(v)))]:[];
     for(const k of ['momentAuto','diaryAuto'])out.settings[k]=s[k]===true;
     for(const kind of ['moment','diary']){out.settings[kind+'Minutes']=bounded(s[kind+'Minutes'],1,10080,kind==='moment'?180:720);out.settings[kind+'Daily']=bounded(s[kind+'Daily'],1,100,kind==='moment'?3:1);}
