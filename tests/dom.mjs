@@ -18,7 +18,7 @@ Object.defineProperty(document,'visibilityState',{value:'visible',configurable:t
 const errors=[];const oldError=console.error;console.error=(...args)=>{errors.push(String(args[1]?.message||args[0]));};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn,label){for(let i=0;i<300;i++){if(fn())return;await sleep(5);}throw Error('Timed out: '+label);}
-const $=s=>document.querySelector(s);const click=s=>{assert.ok($(s),'missing '+s);$(s).click();};
+const $=s=>document.querySelector(s);const click=s=>{if(s.startsWith('[data-tab=') && !$(s))$('[data-action="tab"][data-tab="home"]').click();assert.ok($(s),'missing '+s);$(s).click();};
 const fill=(name,value)=>{assert.ok($(`[name="${name}"]`),name);$(`[name="${name}"]`).value=value;};
 const switchRole=name=>{const select=$('#mc-profile');select.value=[...select.options].find(o=>o.textContent===name).value;select.dispatchEvent(new window.Event('change'));};
 try {
@@ -60,7 +60,7 @@ try {
  fill('draft','再次总结');click('[data-action="send"]');await wait(()=>!$('#mc-status').textContent.includes('正在输入'),'summary retry');assert.notEqual(readState().threads[0].memory.throughId,previousMemory.throughId);
  const saved=readState();assert.equal(saved.profiles.length,2);assert.equal(saved.settings.customInstruction,'自然一点');assert.equal(saved.threads[0].story.frozen,false);assert.equal(saved.settings.storyMemorySource,'worldbook');assert.ok(saved.threads[0].messages.some(m=>m.text.includes('便利店停电了')));
  click('[data-tab="settings"]');assert.equal($('[data-action="create-qr"]'),null);
- window.quickReplyApi.settings.isEnabled=false;window.quickReplyApi.settings.save();globalThis.STMetaCompanion.destroy();await import(pathToFileURL(path.join(base,'index.js')).href+'?reload=1');await wait(()=>$('#mc-wand-button'),'restart');click('#mc-wand-button');assert.ok($('.mc-messages').textContent.includes('我的第一条'));
+ window.quickReplyApi.settings.isEnabled=false;window.quickReplyApi.settings.save();globalThis.STMetaCompanion.destroy();await import(pathToFileURL(path.join(base,'index.js')).href+'?reload=1');await wait(()=>$('#mc-wand-button'),'restart');click('#mc-wand-button');click('[data-tab="chat"]');assert.ok($('.mc-messages').textContent.includes('我的第一条'));
  const beforeRestart=extractions();await sleep(400);assert.equal(extractions(),beforeRestart);assert.equal(window.quickReplyApi.settings.isEnabled,false,'restart must honor disabled QR');assert.equal(window.qrCalls.length,3,'restart must not reimport QR or reenable a user-disabled set');
  window.mockContext.chatId='同卡另一个聊天';window.mockEmit('CHAT_CHANGED');await sleep(400);assert.equal(extractions(),beforeRestart);assert.equal($('#mc-profile').options.length,2);
  const originalDescription=window.mockContext.characters[0].description;window.mockContext.characters[0].description+='失败测试';window.failOnce=true;window.mockEmit('WORLDINFO_UPDATED');await wait(()=>$('#mc-notice').textContent.includes('人物自动提取未完成'),'automatic extraction failure');const failedCount=extractions();await sleep(700);assert.equal(extractions(),failedCount,'no automatic retry storm');click('[data-action="close"][aria-label]');click('#mc-wand-button');await wait(()=>extractions()===failedCount+1 && !$('#mc-status').textContent.includes('正在输入'),'reopen retry');assert.equal($('#mc-profile').options.length,2);

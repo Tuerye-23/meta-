@@ -1,11 +1,12 @@
+import { freshSocial, normalizeSocial } from './social.js';
 import { normalizeApi } from './api-config.js';
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
 
 export function freshState() {
-    return { schema: 1, version: VERSION, profiles: [], threads: [], extractions: {}, selected: '', settings: {
+    return { schema: 1, version: VERSION, social:freshSocial(), profiles: [], threads: [], extractions: {}, selected: '', settings: {
         includeStory: true, recentFloors: 12, storyLimit: 12000, replyTokens: 800, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', customInstruction: '',
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
@@ -58,6 +59,7 @@ export function validateBackup(input) {
         });
     }
     for (const p of out.profiles) if (!out.threads.some(t => t.profileId === p.id)) out.threads.push(newThread(p.id));
+    out.social=normalizeSocial(input.social,[...ids]);
     out.qrInstalled=input.qrInstalled===true;
     out.selected = ids.has(input.selected) ? input.selected : out.profiles[0]?.id || '';
     if(input.extractions && typeof input.extractions==='object') for(const [key,value] of Object.entries(input.extractions).slice(0,200)) {

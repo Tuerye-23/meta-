@@ -1,13 +1,13 @@
 {
   "display_name": "映间 · Meta 旁聊",
-  "description": "和角色一起观看平行世界，也可以独立聊天、开小剧场或静静陪伴。",
+  "description": "内置小手机：和角色聊天、共看剧情、分享朋友圈与互评日记。",
   "loading_order": 120,
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "恒",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "homePage": "https://github.com/Tuerye-23/meta-",
   "auto_update": false,
   "minimum_client_version": "1.12.13"

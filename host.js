@@ -167,6 +167,25 @@ export function createHost(root = globalThis) {
     };
 }
 
+// Native IndexedDB covers hosts that do not expose localforage, including photo-heavy saves.
+async function nativeStateDatabase(root) {
+    if(!root.indexedDB?.open)return null;
+    const db=await new Promise((resolve,reject)=>{
+        const request=root.indexedDB.open('st-meta-companion-native',1);
+        request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('state'))request.result.createObjectStore('state');};
+        request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error || new Error('无法打开映间存储。'));
+        request.onblocked=()=>reject(new Error('映间存储升级被其他窗口阻挡。'));
+    });
+    db.onversionchange=()=>db.close();
+    const transaction=(key,value,write)=>new Promise((resolve,reject)=>{
+        const tx=db.transaction('state',write?'readwrite':'readonly');const store=tx.objectStore('state');
+        const request=write?store.put(value,key):store.get(key);let result;
+        request.onsuccess=()=>{result=request.result;};
+        tx.oncomplete=()=>resolve(result);tx.onabort=()=>reject(tx.error || request.error || new Error('存储未完成。'));tx.onerror=()=>reject(tx.error || request.error || new Error('存储失败。'));
+    });
+    return {getItem:key=>transaction(key,undefined,false),setItem:(key,value)=>transaction(key,value,true)};
+}
+
 export class StateStore {
     constructor(host, root = globalThis) { this.host = host; this.root = root; this.db = null; this.key = ''; this.queue = Promise.resolve(); }
     async init() {
@@ -176,9 +195,13 @@ export class StateStore {
         this.key = 'meta-companion:state:' + scope;
         const lf = this.root.SillyTavern?.libs?.localforage || this.root.localforage;
         if (lf?.createInstance) this.db = lf.createInstance({ name: 'st-meta-companion', storeName: 'state' });
-        const raw = this.db ? await this.db.getItem(this.key) : this.root.localStorage.getItem(this.key);
+        else {try{this.db=await nativeStateDatabase(this.root);}catch(error){console.warn('[映间] IndexedDB 不可用，使用普通存储。',error?.message);}}
+        const stored=this.db ? await this.db.getItem(this.key) : null;
+        const raw=stored ?? this.root.localStorage.getItem(this.key);
         if (!raw) return freshState();
-        return validateBackup(typeof raw === 'string' ? JSON.parse(raw) : raw);
+        const state=validateBackup(typeof raw === 'string' ? JSON.parse(raw) : raw);
+        if(this.db && stored==null)await this.db.setItem(this.key,state);
+        return state;
     }
     save(state) {
         const snapshot = JSON.parse(JSON.stringify(state));

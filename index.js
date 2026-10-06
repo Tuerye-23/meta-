@@ -2,6 +2,7 @@ import { normalizeApi, validateApi } from './api-config.js';
 import { addMessage, buildPrompt, canNudge, characterKey, clamp, literalMacros, mainKey, mergeProfiles, newThread, normalizeProfile, parseProfiles, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
 import { createHost, StateStore } from './host.js';
 import { Interface } from './ui.js';
+import { SocialController } from './social-controller.js';
 
 class Companion {
     constructor(host, store, state) {
@@ -15,7 +16,8 @@ class Companion {
             if(['APP_READY','APP_INITIALIZED','EXTENSIONS_FIRST_LOAD'].includes(name))this.installQR();
             if (this.ui.open) this.render();
         });
-        this.visibility = () => { this.updatePresence(); };
+        this.social = new SocialController(this);
+        this.visibility = () => { this.updatePresence(); this.social.tick(); };
         document.addEventListener('visibilitychange', this.visibility);
         this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
     }
@@ -200,15 +202,17 @@ class Companion {
     }
     async action(name,args={}) {
         try {
-            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();return;}
+            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
-            if(name==='tab') {this.ui.capture();this.ui.tab=args.tab;this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
+            if(name==='tab') {this.ui.capture();this.ui.socialSheet='';this.ui.commentTarget='';this.ui.tab=args.tab;this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
+            if(name==='contact-chat'){this.ui.capture();this.state.selected=args.id;this.ui.tab='chat';this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
             if(name==='select') {this.ui.capture();this.state.selected=args.id;this.render();this.updatePresence();await this.save();this.queueStorySync();return;}
             if(name==='refresh-regex') {await this.loadStoryControls(this.ui.values().memoryBook);this.ui.notice('已同步当前启用的正则，选择正文项目后保存。');return;}
             if(name==='memory-book') {this.ui.capture();this.ui.entries=await this.host.memoryEntries(args.book);this.ui.entryBook=args.book;const d=this.ui.drafts.get(this.ui.previous);if(d)d.memoryEntry='';this.render();return;}
             if(name==='preview') {const{p,t}=this.current();if(!this.busy)await this.refreshStory(p,t);const temporary={...t,messages:[...t.messages]};const draft=this.ui.values().draft?.trim();if(draft)addMessage(temporary,'user',draft);this.ui.preview(this.request(p,temporary));return;}
             if(name==='export') {await this.store.queue;const backup=JSON.parse(JSON.stringify(this.state));if(backup.settings.api)backup.settings.api.apiKey='';const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`映间备份_${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);return;}
             if(name==='stop-company') {if(this.session){const old=this.session;const{t}=this.current(old.profileId);addMessage(t,'note',`一起${old.activity}，约 ${Math.floor(this.elapsed(old)/60000)} 分钟。`);this.session=null;this.updatePresence();await this.save();this.render();this.ui.notice('这次陪伴已结束。');}return;}
+            if(/^(moment-|diary-|social-|save-(moment|diary)-settings$)/.test(name) && await this.social.handle(name,args))return;
             if(this.busy) throw new Error('上一项任务仍在进行，请稍等。');
             if(name==='save-api') {
                 const value=this.ui.apiValues();const api=value.mode==='independent'?validateApi(value).api:normalizeApi(value);
@@ -223,7 +227,7 @@ class Companion {
             }
             if(name==='extract') {await this.extract();return;}
             if(name==='add-profile') {const c=this.host.context();const p=normalizeProfile({name:'新角色',userName:c.name1 || '你',userPersona:c.powerUserSettings?.persona_description || ''});this.state.profiles.push(p);this.state.threads.push(newThread(p.id));this.state.selected=p.id;await this.save();this.render();this.queueStorySync();return;}
-            if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;await this.save();this.ui.drafts.clear();this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
+            if(name==='import') {const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.addEventListener('change',async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>30*1024*1024)throw new Error('备份超过 30 MB。');const restored=validateBackup(JSON.parse(await f.text()));if(!confirm('导入会替换映间现有资料与聊天。继续前请先导出备份。是否继续？'))return;this.session=null;this.updatePresence();this.state=restored;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.momentPhotos=[];await this.save();this.ui.drafts.clear();this.ui.previous='';this.render();this.ui.notice('备份已导入。');}catch(e){this.ui.notice(e.message,true);}});input.click();return;}
             if(name==='save-settings') {const v=this.ui.values();const s=this.state.settings;Object.assign(s,{includeStory:Boolean(v.includeStory),recentFloors:clamp(v.recentFloors,1,60,12),storyLimit:clamp(v.storyLimit,1000,60000,12000),replyTokens:clamp(v.replyTokens,128,4096,800),historyMessages:clamp(v.historyMessages,4,200,40),customInstruction:v.customInstruction || ''});this.ui.resetDraft();await this.save();this.render();this.queueStorySync();this.ui.notice('设置已保存。');return;}
             if(name==='save-story-settings') {
                 const v=this.ui.values();tagNames(v.includeTags);tagNames(v.excludeTags);
@@ -234,7 +238,7 @@ class Companion {
             if(name==='save-summary-settings') {const v=this.ui.values();const every=clamp(v.summaryEvery,16,200,40);Object.assign(this.state.settings,{autoSummary:Boolean(v.autoSummary),summaryEvery:every,summaryKeep:clamp(v.summaryKeep,4,Math.min(60,every-2),12),summaryInstruction:v.summaryInstruction||''});this.ui.resetDraft();await this.save();this.render();this.ui.notice('总结设置已保存。');return;}
             const{p,t}=this.current(); const v=this.ui.values();
             if(name==='save-profile') {if(!v.name?.trim())throw new Error('请填写角色姓名。');Object.assign(p,normalizeProfile({...p,...v},p),{id:p.id,manuallyEdited:true});this.ui.resetDraft();await this.save();this.render();this.ui.notice('角色资料已保存。');return;}
-            if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);this.state.selected=this.state.profiles[0]?.id || '';await this.save();this.render();return;}
+            if(name==='delete-profile') {if(!confirm(`删除 ${p.name} 的资料、meta 聊天和批注？`))return;if(this.session?.profileId===p.id){this.session=null;this.updatePresence();}this.state.profiles=this.state.profiles.filter(x=>x.id!==p.id);this.state.threads=this.state.threads.filter(x=>x.profileId!==p.id);for(const key of ['momentRoles','momentCommentRoles','diaryRoles','diaryCommentRoles'])this.state.social.settings[key]=this.state.social.settings[key].filter(id=>id!==p.id);for(const key of Object.keys(this.state.social.schedules))if(key.endsWith(':'+p.id))delete this.state.social.schedules[key];this.state.selected=this.state.profiles[0]?.id || '';await this.save();this.render();return;}
             if(name==='save-memory') {t.memory.text=v.memory || '';if(!t.memory.text)t.memory.throughId='';this.ui.resetDraft();await this.save();this.render();this.ui.notice('记忆已保存。');return;}
             if(name==='summarize') {await this.summarize();return;}
             if(name==='delete-message') {if(!confirm('删除这条 meta 消息？涉及已整理内容时会清空对应摘要，之后可重新整理。'))return;removeMessage(t,args.id);await this.save();this.render();return;}
@@ -289,7 +293,7 @@ class Companion {
         }).finally(()=>{this.qrTask=null;});
         return this.qrTask;
     }
-    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.social.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {

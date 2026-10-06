@@ -1,5 +1,6 @@
 import { API_PARAMETERS, normalizeApi } from './api-config.js';
 import { VERSION } from './core.js';
+import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const field = (label, name, value, rows = 3) => `<label class="mc-field"><span>${label}</span><textarea name="${name}" rows="${rows}">${esc(value)}</textarea></label>`;
@@ -7,14 +8,14 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.host = host; this.action = action; this.tab = 'chat'; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];
+        this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
-            <header class="mc-header"><strong>映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机">×</button></header>
+            <header class="mc-header"><button type="button" class="mc-back" data-action="tab" data-tab="home" aria-label="返回首页">‹</button><strong id="mc-app-title">映间</strong><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机">×</button></header>
             <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
-            <nav class="mc-nav" aria-label="映间功能">${[['chat','消息','fa-comment-dots'],['roles','联系人','fa-user-group'],['story','共看','fa-clapperboard'],['company','陪伴','fa-moon'],['settings','设置','fa-sliders']].map(([id,label,icon]) => `<button type="button" data-action="tab" data-tab="${id}"><i class="fa-solid ${icon}" aria-hidden="true"></i><span>${label}</span></button>`).join('')}</nav><div class="mc-home-bar" aria-hidden="true"></div>
+            <button type="button" class="mc-home-button" data-action="tab" data-tab="home" aria-label="返回手机首页"><span></span></button>
           </section>`;
         document.body.append(root); this.root = root; this.content = root.querySelector('#mc-content');
         root.addEventListener('click', event => {
@@ -36,7 +37,7 @@ export class Interface {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.id === 'mc-draft') { event.preventDefault(); action('send'); }
         };
         document.addEventListener('keydown', this.keyHandler);
-        this.bindDrag();
+        this.bindDrag();this.timeTimer=setInterval(()=>this.homeClock(),1000);
     }
     bindDrag() {
         const header=this.root.querySelector('.mc-header'); const panel=this.root.querySelector('.mc-panel');
@@ -73,7 +74,7 @@ export class Interface {
     }
     show() { this.lastFocus = document.activeElement; this.open = true; this.root.hidden = false; this.placePhone(); this.root.querySelector('[data-action="close"][aria-label]')?.focus(); }
     hide() { this.capture(); this.snapshotView(); this.open = false; this.root.hidden = true; this.lastFocus?.focus?.(); }
-    notice(message, error = false) { const el = this.root.querySelector('#mc-notice'); el.hidden = !message; el.textContent = message; el.classList.toggle('mc-error', error); }
+    notice(message, error = false) { clearTimeout(this.noticeTimer); const el = this.root.querySelector('#mc-notice'); el.hidden = !message; el.textContent = message; el.classList.toggle('mc-error', error); if(message && !error)this.noticeTimer=setTimeout(()=>{if(!this.root.isConnected)return;el.hidden=true;},8000); }
     capture() {
         if (!this.previous) return;
         const values = {};
@@ -82,7 +83,7 @@ export class Interface {
         }
         this.drafts.set(this.previous, values);
     }
-    clearDraft(name) { const key = this.previous; const d = this.drafts.get(key) || {}; d[name] = ''; this.drafts.set(key,d); const n=this.content.querySelector(`[name="${name}"]`); if(n)n.value=''; }
+    clearDraft(name) { const key = this.previous; const d = this.drafts.get(key) || {}; d[name] = ''; this.drafts.set(key,d); const n=[...this.content.querySelectorAll("[name]")].find(el=>el.name===name); if(n)n.value=''; }
     resetDraft() { this.drafts.delete(this.previous); this.previous = ''; }
     apiValues() {
         const v=this.values();const api={};for(const key of Object.keys(normalizeApi()))api[key]=v['api'+key[0].toUpperCase()+key.slice(1)];return normalizeApi(api);
@@ -94,22 +95,29 @@ export class Interface {
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     render(state, busy = false, session = null) {
         this.capture(); this.snapshotView();
-        const oldKey=this.viewKey; const newKey=`${this.tab}:${state.selected}`; let markup='';
+        const oldKey=this.viewKey; const newKey=`${this.tab}:${['home','moments','diary'].includes(this.tab)?'global':state.selected}:${this.diaryTab}:${this.socialSheet}`; let markup='';
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;
         this.root.querySelector('#mc-status').textContent = busy ? '对方正在输入…' : state.settings.includeStory ? '与你共看另一个世界' : '只聊属于你们的事';
         this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
+        this.root.querySelector('.mc-panel').dataset.screen=this.tab;
+        this.root.querySelector('.mc-top').hidden=!['chat','roles','story','company','settings'].includes(this.tab);
+        this.root.querySelector('.mc-back').hidden=this.tab==='home';
+        this.root.querySelector('#mc-app-title').textContent=this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
         const c = this.host.context(); const s = state.settings;
         const disabled = busy ? 'disabled' : '';const api=normalizeApi(s.api);
+        if (this.tab === 'home') markup=homeScreen();
+        if (this.tab === 'moments') markup=momentsScreen(state,this,c.name1,busy);
+        if (this.tab === 'diary') markup=diaryScreen(state,this,busy);
         if (this.tab === 'chat') markup = p ? `
             <div class="mc-chat-meta"><span>${s.includeStory ? '主线自动同步 · '+esc(t?.story?.label || '等待正文') : '独立 Meta 对话'}</span><button type="button" data-action="preview" aria-label="查看本次发送内容">发送预览</button></div>
             <div class="mc-messages" aria-live="polite">${(t?.messages || []).slice(-200).map(m => `<article class="mc-message mc-${m.role}"><header><strong>${esc(m.role === 'user' ? p.userName || '你' : m.role === 'note' ? '记录' : p.name)}</strong><small>${esc(m.kind === 'proactive' ? '主动消息' : m.kind === 'theatre' ? '小剧场' : '')} ${new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><button type="button" data-action="delete-message" data-id="${esc(m.id)}" aria-label="删除这条消息">×</button></header><div>${esc(m.text)}</div></article>`).join('') || `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>和 ${esc(p.name)} 聊几句</strong><p>可以一起看故事，也可以从今天过得怎么样聊起。<br>关系沿用角色设定。</p></div>`}</div>
             <form class="mc-compose"><textarea id="mc-draft" name="draft" rows="3" placeholder="想和 ${esc(p.name)} 说什么？" aria-label="消息内容"></textarea><div><small>Ctrl / ⌘ + Enter 发送</small><button type="button" data-action="retry" ${disabled}>重试回复</button><button type="button" class="mc-primary" data-action="send" ${disabled}>发送</button></div></form>` : `<div class="mc-empty"><span class="mc-orbit">◌</span><strong>先认识一个人</strong><p>选择角色卡、世界书，或者手动写一份角色资料。</p><button type="button" class="mc-primary" data-action="tab" data-tab="roles">添加角色</button></div>`;
         if (this.tab === 'roles') {
             const cards = c.characters || []; const books = c.getWorldInfoNames?.() || [];
-            markup = `<div class="mc-scroll"><details class="mc-source-box" ${p ? '' : 'open'}><summary>从角色卡 / 世界书提取</summary><p>可多选。多人卡会整理出多位角色，提取后可以修改。每批素材会分段调用当前模型。</p>
+            markup = `<div class="mc-scroll"><div class="mc-contact-list">${state.profiles.map(person=>`<div class="mc-contact-row"><span class="mc-avatar">${esc(person.name.slice(0,1))}</span><button type="button" data-action="contact-chat" data-id="${esc(person.id)}"><strong>${esc(person.name)}</strong><small>${esc(state.threads.find(x=>x.profileId===person.id)?.messages.at(-1)?.text?.slice(0,45) || '开始聊天')}</small></button><button type="button" data-action="select" data-id="${esc(person.id)}" aria-label="编辑 ${esc(person.name)} 的资料">⋯</button></div>`).join('')}</div><details class="mc-source-box" ${p ? '' : 'open'}><summary>从角色卡 / 世界书提取</summary><p>可多选。多人卡会整理出多位角色，提取后可以修改。每批素材会分段调用当前模型。</p>
               <div class="mc-two"><label class="mc-field"><span>角色卡（可多选）</span><select name="cards" multiple size="5">${cards.map((card,i) => `<option value="${i}" ${i===Number(c.characterId)?'selected':''}>${esc(card.name || card.data?.name || '未命名')}</option>`).join('')}</select></label>
               <label class="mc-field"><span>世界书（可多选）</span><select name="books" multiple size="5">${books.map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join('')}</select></label></div>
               <label class="mc-check"><input type="checkbox" name="includeDisabled">包含已关闭的世界书条目</label><button type="button" class="mc-primary" data-action="extract" ${disabled}>提取人物</button></details>
@@ -172,7 +180,7 @@ export class Interface {
             else if (n.multiple) for (const o of n.options) o.selected = saved[n.name].includes(o.value);
             else n.value = saved[n.name];
         }
-        this.apiVisibility();
+        this.apiVisibility();this.homeClock();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if(i<view.details.length)d.open=view.details[i];
@@ -183,6 +191,7 @@ export class Interface {
             if(scroll)scroll.scrollTop=scroll.classList.contains('mc-messages') && (!view || view.bottom) ? scroll.scrollHeight : view?.scroll || 0;
         }
     }
+    homeClock() {if(!this.open)return;const now=new Date();const clock=this.content.querySelector('#mc-home-time');if(clock)clock.textContent=now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});const date=this.content.querySelector('#mc-home-date');if(date)date.textContent=now.toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});}
     clock(milliseconds, paused = false) { const n=this.content.querySelector('#mc-clock'); if(n)n.textContent=`${Math.floor(milliseconds/60000).toString().padStart(2,'0')}:${Math.floor(milliseconds/1000%60).toString().padStart(2,'0')}${paused?' · 已暂停':''}`; }
     preview(request) {
         const dialog = document.createElement('dialog'); dialog.className='mc-preview';
@@ -192,7 +201,7 @@ export class Interface {
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
-    destroy() { document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
+    destroy() { clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
 }
 
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}

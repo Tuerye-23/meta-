@@ -1,8 +1,16 @@
 {
   "name": "st-meta-companion",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/*.test.js", "test:dom": "node tests/dom.mjs", "test:browser": "node tests/browser.mjs", "check": "node --check index.js && node --check core.js && node --check host.js && node --check ui.js && node --check api.js && node --check api-config.js" },
-  "devDependencies": { "happy-dom": "20.0.10" }
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "test:dom": "node tests/dom.mjs",
+    "test:browser": "node tests/browser.mjs",
+    "check": "node --check index.js && node --check core.js && node --check host.js && node --check ui.js && node --check api.js && node --check api-config.js && node --check social.js && node --check social-controller.js && node --check phone-ui.js",
+    "test:social-browser": "node tests/social-browser.mjs"
+  },
+  "devDependencies": {
+    "happy-dom": "20.0.10"
+  }
 }
