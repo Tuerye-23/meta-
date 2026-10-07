@@ -1,9 +1,10 @@
+import { notificationPreferences } from './notifications.js';
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
 import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT } from './prompts.js';
-export const VERSION = '0.8.0';
+export const VERSION = '0.9.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -14,7 +15,7 @@ export function freshState() {
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', headPrompt: HEAD_PROMPT, aiPrompt: AI_PROMPT,
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
-        api:apiDefaults(),
+        api:apiDefaults(), ...notificationPreferences(),
         autoSummary: false, summaryEvery: 40, summaryKeep: 12, summaryInstruction: '',
     } };
 }
@@ -41,7 +42,7 @@ export function normalizeProfile(value, provenance = {}) {
 }
 
 export function newThread(profileId) {
-    return { id: uid(), profileId, messages: [], memory: { text: '', throughId: '' }, story: null, annotations: [] };
+    return { id: uid(), profileId, messages: [], unreadIds: [], memory: { text: '', throughId: '' }, story: null, annotations: [] };
 }
 
 export function validateBackup(input) {
@@ -68,6 +69,7 @@ export function validateBackup(input) {
             floors: Array.isArray(t.story.floors) ? t.story.floors.filter(f => Number.isInteger(f.index) && typeof f.body === 'string').map(f => ({ index: f.index, name: text(f.name), body: f.body })) : [],
         } : null;
         out.threads.push({ id: t.id, profileId: t.profileId, messages, story,
+            unreadIds:Array.isArray(t.unreadIds)?[...new Set(t.unreadIds.filter(id=>messages.some(m=>m.id===id && m.role==='assistant')))]:[],
             memory: { text: text(t.memory?.text), throughId: messages.some(m => m.id === t.memory?.throughId) ? t.memory.throughId : '' },
             annotations: Array.isArray(t.annotations) ? t.annotations.filter(a => typeof a?.quote === 'string' && typeof a?.reply === 'string').map(a => ({ quote: a.quote, reply: a.reply, label: text(a.label), createdAt: Number(a.createdAt) || 0 })) : [],
         });
@@ -84,7 +86,7 @@ export function validateBackup(input) {
     }
     const s = input.settings || {};
     const wasDefault=input.version!==VERSION && s.api?.maxTokens==='4096' && s.api?.timeout==='120' && !s.api?.topP && !s.api?.frequencyPenalty && !s.api?.presencePenalty && ['1',''].includes(s.api?.temperature);
-    out.settings = { api:wasDefault?apiDefaults(s.api):normalizeApi(s.api),includeStory: s.includeStory !== false,
+    out.settings = { ...notificationPreferences(s), api:wasDefault?apiDefaults(s.api):normalizeApi(s.api),includeStory: s.includeStory !== false,
         recentFloors: clamp(s.recentFloors, 1, 60, 12), historyMessages: clamp(s.historyMessages, 4, 200, 40),
         intervalMinutes: clamp(s.intervalMinutes, 2, 120, 10), maxProactive: clamp(s.maxProactive, 1, 20, 3),
         activity: text(s.activity) || '待一会儿', headPrompt:typeof s.headPrompt==='string'?s.headPrompt.slice(0,30000):HEAD_PROMPT,aiPrompt:typeof s.aiPrompt==='string'?s.aiPrompt.slice(0,30000):AI_PROMPT,
@@ -316,6 +318,7 @@ export function removeMessage(thread, id) {
     if (at < 0) return;
     if (through >= at) thread.memory = { text: '', throughId: '' };
     thread.messages.splice(at, 1);
+    if(thread.unreadIds)thread.unreadIds=thread.unreadIds.filter(messageId=>messageId!==id);
 }
 
 export function canNudge(session, now, { visible, open, busy, hostBusy, selected }) {

@@ -1,3 +1,4 @@
+import { NOTIFICATION_TONES, hasUnread } from './notifications.js';
 import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
 import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { contactsScreen, contactTitle } from './contacts-ui.js';
@@ -17,7 +18,8 @@ export class Interface {
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
-            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><button type="button" id="mc-chat-title" data-action="chat-settings" hidden></button><span class="mc-island" aria-hidden="true"></span><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+            <div class="mc-statusbar"><time id="mc-status-time"></time><span class="mc-island" aria-hidden="true"></span><div class="mc-status-icons"><span id="mc-network" role="img" aria-label="网络状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 16a4 4 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></span><span id="mc-battery" role="img" aria-label="电量示意"><svg viewBox="0 0 28 16" aria-hidden="true"><rect x="1" y="2" width="22" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect id="mc-battery-fill" x="3" y="4" width="16" height="8" rx="1" fill="currentColor"/><path d="M25 6v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></div></div>
+            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><button type="button" id="mc-chat-title" data-action="chat-settings" hidden></button><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
             <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
             <button type="button" class="mc-home-button" data-action="tab" data-tab="home" aria-label="返回手机首页"><span></span></button>
@@ -29,7 +31,7 @@ export class Interface {
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
         root.addEventListener('change', event => {if(event.target.name==='replyStyle')this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
-        root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();});
+        root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();if(event.target.name==='notificationVolume')this.soundVolume();});
         root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
         this.keyHandler = event => {
@@ -44,7 +46,7 @@ export class Interface {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.id === 'mc-draft') { event.preventDefault(); action('send'); }
         };
         document.addEventListener('keydown', this.keyHandler);
-        this.bindDrag();this.timeTimer=setInterval(()=>this.homeClock(),1000);
+        this.initStatus();this.bindDrag();this.timeTimer=setInterval(()=>this.homeClock(),1000);
     }
     bindDrag() {
         const header=this.root.querySelector('.mc-header'); const panel=this.root.querySelector('.mc-panel');
@@ -154,10 +156,13 @@ export class Interface {
         if(this.avatarTarget)this.root.querySelector('#mc-app-title').textContent='更换头像';
         this.root.querySelector('.mc-back').hidden=this.tab==='home' && !this.avatarTarget;
         this.root.querySelector('.mc-back').setAttribute('aria-label',threadOpen?'返回消息列表':'返回上一页');
+        const otherUnread=state.threads.some(t=>hasUnread(t) && t.profileId!==state.selected);
+        const back=this.root.querySelector('.mc-back');back.querySelector('.mc-unread-dot')?.remove();
+        if(threadOpen && otherUnread)back.insertAdjacentHTML('beforeend','<span class="mc-unread-dot" role="status" aria-label="其他聊天有未读消息"></span>');
         this.chatProfile=state.selected;
         const c = this.host.context(); const s = state.settings;
         const disabled = busy ? 'disabled' : '';const api=normalizeApi(s.api);
-        if (this.tab === 'home') markup=homeScreen();
+        if (this.tab === 'home') markup=homeScreen(state.threads.some(hasUnread));
         if (this.tab === 'moments') markup=momentsScreen(state,this,c.name1,busy);
         if (this.tab === 'diary') markup=diaryScreen(state,this,busy);
         if (this.tab === 'chat') markup=chatScreen(state,this,busy);
@@ -201,7 +206,7 @@ export class Interface {
           <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button>${settingEnd}${settingStart('history','聊天记录设置','正文同步与聊天上下文','chat')}
           <form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
           <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
-          <button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存聊天记录设置</button></form><p class="mc-muted">标签、正则及正文剧情记忆的读取来源，在「共看」中设置。</p><button type="button" data-action="tab" data-tab="story">正文读取设置</button>${settingEnd}${settingStart('summary','Meta小手机自动总结','整理你们自己的聊天记忆','summary')}
+          <button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存聊天记录设置</button></form><p class="mc-muted">标签、正则及正文剧情记忆的读取来源，在「共看」中设置。</p><button type="button" data-action="tab" data-tab="story">正文读取设置</button>${settingEnd}${settingStart('notifications','消息提醒','提示音与音量','sound')}<label class="mc-field"><span>消息提示音</span><select name="notificationTone">${NOTIFICATION_TONES.map(([id,label])=>`<option value="${id}" ${s.notificationTone===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="mc-field mc-volume-field"><span>提示音音量 <output id="mc-sound-volume">${Math.round(s.notificationVolume*100)}%</output></span><input name="notificationVolume" type="range" min="0" max="100" step="1" value="${Math.round(s.notificationVolume*100)}" aria-label="提示音音量"></label><div class="mc-toolbar"><button type="button" data-action="preview-sound">试听</button><button type="button" class="mc-primary" data-action="save-notifications">保存消息提醒</button></div>${settingEnd}${settingStart('summary','Meta小手机自动总结','整理你们自己的聊天记忆','summary')}
           <label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div><button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p>
           <label class="mc-field"><span>查看哪位联系人的记忆</span><select name="summaryProfile">${state.profiles.map(p=>`<option value="${esc(p.id)}" ${p.id===state.selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
           ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p>` : ''}
@@ -219,7 +224,7 @@ export class Interface {
             else n.value = saved[n.name];
         }
 
-        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();
+        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();this.soundVolume();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];
@@ -231,7 +236,17 @@ export class Interface {
         }
         if(this.pendingReply && busy)this.streamText(this.pendingReply.profileId,this.pendingReply.parts ?? this.pendingReply.text);
     }
-    homeClock() {if(!this.open)return;const now=new Date();const clock=this.content.querySelector('#mc-home-time');if(clock)clock.textContent=now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});const date=this.content.querySelector('#mc-home-date');if(date)date.textContent=now.toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});}
+    soundVolume() {const input=this.content.querySelector('[name="notificationVolume"]');const output=this.content.querySelector('#mc-sound-volume');if(input && output){output.textContent=Math.round(Number(input.value))+'%';input.style.setProperty('--mc-volume-fill',input.value+'%');}}
+    initStatus() {
+        this.networkHandler=()=>this.homeClock();window.addEventListener('online',this.networkHandler);window.addEventListener('offline',this.networkHandler);
+        this.batteryHandler=()=>this.homeClock();
+        try{Promise.resolve(navigator.getBattery?.()).then(battery=>{if(!battery || !this.root.isConnected)return;this.battery=battery;for(const event of ['levelchange','chargingchange'])battery.addEventListener(event,this.batteryHandler);this.homeClock();}).catch(()=>{});}catch{}
+    }
+    homeClock() {if(!this.open)return;const now=new Date();
+        this.root.querySelector('#mc-status-time').textContent=now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
+        const network=this.root.querySelector('#mc-network');network.classList.toggle('mc-offline',navigator.onLine===false);network.setAttribute('aria-label',navigator.onLine===false?'网络已断开':'网络在线');
+        if(this.battery){const level=Math.round(this.battery.level*100);const battery=this.root.querySelector('#mc-battery');battery.setAttribute('aria-label',`电量 ${level}%${this.battery.charging?'，充电中':''}`);battery.classList.toggle('mc-battery-low',level<=20);this.root.querySelector('#mc-battery-fill').setAttribute('width',String(18*this.battery.level));}
+        const clock=this.content.querySelector('#mc-home-time');if(clock)clock.textContent=now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});const date=this.content.querySelector('#mc-home-date');if(date)date.textContent=now.toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});}
     clock(milliseconds, paused = false) { const n=this.content.querySelector('#mc-clock'); if(n)n.textContent=`${Math.floor(milliseconds/60000).toString().padStart(2,'0')}:${Math.floor(milliseconds/1000%60).toString().padStart(2,'0')}${paused?' · 已暂停':''}`; }
     preview(request) {
         const dialog = document.createElement('dialog'); dialog.className='mc-preview';
@@ -241,13 +256,13 @@ export class Interface {
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
-    destroy() { clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
+    destroy() { window.removeEventListener('online',this.networkHandler);window.removeEventListener('offline',this.networkHandler);for(const event of ['levelchange','chargingchange'])this.battery?.removeEventListener(event,this.batteryHandler);clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
 }
 
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}
 
 function optionalInput(label,name,value,min,max,step) {return `<label class="mc-field"><span>${label}</span><input name="${name}" type="number" value="${esc(value)}" min="${min}" max="${max}" step="${step}" placeholder="留空不发送"></label>`;}
 
-const settingPaths={api:'<path d="M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0V8Zm5 9v4"/>',chat:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8M8 13h5"/>',summary:'<path d="M5 5h14v14H5zM8 9h8M8 12h8M8 15h4M17 3v4M15 5h4"/>',prompts:'<path d="m4 20 4-1L20 7l-3-3L5 16l-1 4ZM14 7l3 3M3 4h6M6 1v6"/>',backup:'<path d="M4 15v5h16v-5M12 3v12m-5-5 5 5 5-5"/>'};
+const settingPaths={sound:'<path d="M4 9h4l5-4v14l-5-4H4V9ZM17 8a6 6 0 0 1 0 8M20 5a10 10 0 0 1 0 14"/>',api:'<path d="M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0V8Zm5 9v4"/>',chat:'<path d="M4 5h16v12H9l-5 4V5Z"/><path d="M8 9h8M8 13h5"/>',summary:'<path d="M5 5h14v14H5zM8 9h8M8 12h8M8 15h4M17 3v4M15 5h4"/>',prompts:'<path d="m4 20 4-1L20 7l-3-3L5 16l-1 4ZM14 7l3 3M3 4h6M6 1v6"/>',backup:'<path d="M4 15v5h16v-5M12 3v12m-5-5 5 5 5-5"/>'};
 const settingStart=(key,label,subtitle,symbol)=>`<details class="mc-setting-group" data-view="settings-${key}" data-section="${key}"><summary><span class="mc-setting-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${settingPaths[symbol]}</svg></span><span><strong>${label}</strong><small>${subtitle}</small></span><svg class="mc-setting-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></summary><div class="mc-setting-body">`;
 const settingEnd='</div></details>';

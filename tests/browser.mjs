@@ -38,7 +38,7 @@ try {
     } else {
       const before=await page.locator('.mc-panel').boundingBox();const header=await page.locator('.mc-header').boundingBox();await page.mouse.move(header.x+50,header.y+20);await page.mouse.down();await page.mouse.move(header.x+100,header.y+60,{steps:4});await page.mouse.up();assert.deepEqual(await page.locator('.mc-panel').boundingBox(),before,'mobile phone does not drag');
     }
-    await go('settings');assert.equal(await page.locator('[data-action="create-qr"]').count(),0);assert.equal(await page.locator('.mc-setting-group').count(),5);assert.equal(await page.locator('.mc-setting-group[open]').count(),0);await page.screenshot({path:path.join(artifacts,`settings-collapsed-${viewport.width}.png`)});
+    await go('settings');assert.equal(await page.locator('[data-action="create-qr"]').count(),0);assert.equal(await page.locator('.mc-setting-group').count(),6);assert.equal(await page.locator('.mc-setting-group[open]').count(),0);await page.screenshot({path:path.join(artifacts,`settings-collapsed-${viewport.width}.png`)});
     await page.locator('[data-section="prompts"]>summary').click();await page.screenshot({path:path.join(artifacts,`settings-prompts-${viewport.width}.png`)});
     const scrollState=await page.evaluate(()=>{const el=document.querySelector('.mc-scroll');el.scrollTop=300;const input=document.querySelector('[name="headPrompt"]');input.value='尚未保存的提示词';input.focus({preventScroll:true});input.setSelectionRange(2,5);return {top:el.scrollTop};});
     await page.evaluate(()=>{window.mockEmit('MESSAGE_EDITED');});await page.waitForTimeout(450);

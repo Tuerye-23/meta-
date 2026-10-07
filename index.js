@@ -8,10 +8,12 @@ import { ContactsController } from './contacts-controller.js';
 import { SocialController } from './social-controller.js';
 import { AvatarController } from './avatars.js';
 import { replyParts, shortChat, lastReplyGroup } from './chat-mode.js';
+import { MessageSound, markRead, receiveMessages, notificationPreferences } from './notifications.js';
 
 class Companion {
     constructor(host, store, state) {
         this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null; this.syncTimer=null; this.storyRevision=0; this.disposed=false; this.autoPending=false; this.autoReading=false; this.autoTimer=null; this.autoFailure=''; this.observedOrigin=''; this.qrTimer=null; this.qrAttempts=0;
+        this.sound = new MessageSound();
         this.ui = new Interface(host, (name, args) => this.action(name, args));
         this.unlisten = host.initEvents(name => {
             if(name==='CHAT_CHANGED') {this.storyRevision++; for(const t of this.state.threads)t.story=null;}
@@ -22,7 +24,7 @@ class Companion {
             if (this.ui.open) this.render();
         });
         this.social = new SocialController(this);this.contacts=new ContactsController(this);this.avatars=new AvatarController(this);
-        this.visibility = () => { this.updatePresence(); this.social.tick(); };
+        this.visibility = () => { this.render(); this.updatePresence(); this.social.tick(); };
         document.addEventListener('visibilitychange', this.visibility);
         this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
     }
@@ -33,7 +35,12 @@ class Companion {
         if (!t) { t = newThread(id); this.state.threads.push(t); }
         return { p, t };
     }
-    render() { this.ui.render(this.state, this.busy, this.session); this.paintClock(); }
+    viewingThread(id) {return this.ui.open && document.visibilityState==='visible' && this.ui.tab==='chat' && this.ui.chatPage==='thread' && !this.ui.avatarTarget && this.state.selected===id;}
+    render() {
+        const t=this.state.threads.find(t=>t.profileId===this.state.selected);
+        if(this.viewingThread(this.state.selected) && markRead(t))this.save().catch(error=>this.ui.notice(error.message,true));
+        this.ui.render(this.state, this.busy, this.session); this.paintClock();
+    }
     async save() { await this.store.save(this.state); }
     log(message,level='info') {
         const key=this.state.settings.api?.apiKey;
@@ -118,7 +125,9 @@ class Companion {
             else {
                 for(const old of replaced)removeMessage(t,old.id);
                 const replyId=isShort?uid():null;
-                for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;}
+                const received=[];
+                for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;received.push(message);}
+                if(!retry){receiveMessages(t,received,this.viewingThread(p.id));void this.sound.play(this.state.settings);}
             }
             this.render();
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');
@@ -206,13 +215,13 @@ class Companion {
     }
     async action(name,args={}) {
         try {
+            void this.sound.unlock();
             if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
             if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && (this.ui.contactPage==='detail' || this.ui.contactPage==='chatMode' && this.ui.chatModeDirect) && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';this.ui.chatModeDirect=false;}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
             if(name==='social-avatar'){this.avatars.open('user');return;}
             if(name.startsWith('avatar-') && await this.avatars.handle(name,args))return;
             if(name==='chat-settings'){this.ui.capture();this.ui.editorId=args.id || this.state.selected;this.ui.contactPage='detail';this.ui.contactReturn='chat';this.ui.tab='roles';this.ui.chatTools=false;this.render();return;}
-            if(name==='chat-mode-settings'){this.ui.capture();this.ui.editorId=this.state.selected;this.ui.contactPage='chatMode';this.ui.contactReturn='chat';this.ui.chatModeDirect=true;this.ui.tab='roles';this.render();return;}
             if(name==='chat-new'){await this.action('tab',{tab:'roles'});return;}
             if(((name.startsWith('contact-') && name!=='contact-chat') || name==='save-supplements') && await this.contacts.handle(name,args))return;
             if(name==='tab') {this.ui.capture();this.ui.avatarTarget=null;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.contactReturn='';this.ui.tab=args.tab;if(args.tab==='chat'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}if(args.tab==='roles'){this.ui.contactPage='list';this.ui.editorId='';}this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}
@@ -258,6 +267,11 @@ class Companion {
                 this.ui.resetDraft();await this.save();await this.syncCurrentStory();this.render();this.ui.notice('读取设置已保存，主线会自动跟随最新内容。');return;
             }
             if(name==='save-summary-settings') {const v=this.ui.values();const every=clamp(v.summaryEvery,16,200,40);Object.assign(this.state.settings,{autoSummary:Boolean(v.autoSummary),summaryEvery:every,summaryKeep:clamp(v.summaryKeep,4,Math.min(60,every-2),12),});this.ui.resetDraft(['autoSummary','summaryEvery','summaryKeep']);await this.save();this.render();this.ui.notice('总结设置已保存。');return;}
+            if(name==='save-notifications' || name==='preview-sound') {
+                const v=this.ui.values();const preferences=notificationPreferences({notificationTone:v.notificationTone,notificationVolume:Number(v.notificationVolume)/100});
+                if(name==='preview-sound'){if(!await this.sound.play(preferences))this.ui.notice('当前浏览器未能播放提示音，请点击试听重试。',true);return;}
+                Object.assign(this.state.settings,preferences);this.ui.resetDraft(['notificationTone','notificationVolume']);await this.save();this.render();this.ui.notice('消息提醒已保存。');return;
+            }
             if(name==='save-prompts'){const v=this.ui.values();Object.assign(this.state.settings,{headPrompt:v.headPrompt ?? HEAD_PROMPT,aiPrompt:v.aiPrompt ?? AI_PROMPT});this.ui.resetDraft(['headPrompt','aiPrompt']);await this.save();this.render();this.ui.notice('头部和 AI 提示词已保存。');return;}
             if(name==='reset-prompts'){for(const [key,value] of [['headPrompt',HEAD_PROMPT],['aiPrompt',AI_PROMPT]]){const input=this.ui.content.querySelector(`[name="${key}"]`);if(input)input.value=value;}this.ui.capture();this.ui.notice('已填入默认提示词，保存后生效。');return;}
             const{p,t}=this.current(this.ui.tab==='roles' && ['save-profile','delete-profile'].includes(name)?this.ui.editorId:this.state.selected); const v=this.ui.values();
@@ -317,7 +331,7 @@ class Companion {
         }).finally(()=>{this.qrTask=null;});
         return this.qrTask;
     }
-    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.social.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.sound.destroy();this.social.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {
