@@ -5,6 +5,8 @@ import { POKE_PROMPT, HEAD_PROMPT, AI_PROMPT } from '../prompts.js';
 import { avatarSource, avatarMarkup } from '../images.js';
 import { AvatarController } from '../avatars.js';
 import { recentConversations, conversationTime, chatScreen } from '../chat-ui.js';
+import { independentBody } from '../api.js';
+import { createHost } from '../host.js';
 
 test('recent inbox excludes untouched contacts and sorts latest events without modifying stored histories',()=>{
     const state=freshState();state.profiles=['A','B','C'].map(name=>normalizeProfile({name}));state.threads=state.profiles.map(p=>newThread(p.id));
@@ -22,10 +24,39 @@ test('poke appends the approved prompt to regular chat definitions and history w
     const state=freshState(),p=normalizeProfile({name:'Rick',userName:'恒',avatarImage:'https://images.test/secret.png',description:'Rick原始人设'}),t=newThread(p.id);
     state.social.avatar='data:image/png;base64,AAAA';addMessage(t,'user','刚才的话题');addMessage(t,'assistant','前一次回复');addMessage(t,'note','恒 戳了戳 Rick。','poke');
     const request=buildPrompt(p,t,state.settings,{kind:'poke'});assert.equal(request.systemPrompt,HEAD_PROMPT);assert.equal(request.prompt[0].content,AI_PROMPT);
-    assert.equal(request.prompt.at(-1).role,'system');assert.match(request.prompt.at(-1).content,/来自 恒 的「戳一戳」/);assert.match(request.prompt.at(-1).content,/另一个世界的故事仍是你们共同观看/);
+    const instruction=request.prompt.find(m=>m.role==='system' && m.content.startsWith('【戳一戳】'));
+    assert.match(instruction.content,/来自 恒 的「戳一戳」/);assert.match(instruction.content,/另一个世界的故事仍是你们共同观看/);
+    assert.equal(request.prompt.at(-1).role,'user');assert.match(request.prompt.at(-1).content,/恒 戳了戳 Rick。/);
     assert.equal(request.prompt.filter(m=>m.role==='user' && m.content==='刚才的话题').length,1);
     assert.doesNotMatch(request.prompt.map(m=>m.content).join('\n'),/images\.test|data:image|avatarImage/);
     assert.ok(!buildPrompt(p,t,state.settings).prompt.some(m=>m.content.startsWith('【戳一戳】')));assert.match(POKE_PROMPT,/不替 {{user}} 补写/);
+});
+
+test('poke ends with the real interaction after provider system extraction for empty, completed and summarized chats',()=>{
+    const state=freshState(),p=normalizeProfile({name:'Rick',userName:'恒'});
+    for(const scenario of ['empty','completed','summarized']) {
+        const t=newThread(p.id);
+        if(scenario!=='empty'){addMessage(t,'user','之前的话');addMessage(t,'assistant','之前的回复');}
+        if(scenario==='summarized'){t.memory={text:'此前聊过写作。',throughId:t.messages.at(-1).id};}
+        const before=JSON.stringify(t),request=buildPrompt(p,t,state.settings,{kind:'poke'});
+        for(const provider of ['openai','claude']) {
+            const {body}=independentBody(request,{mode:'independent',provider,baseUrl:'https://example.test/v1',model:'test-model',maxTokens:'12000'});
+            const dialogue=body.messages.filter(m=>m.role!=='system');
+            assert.equal(dialogue.at(-1).role,'user',`${scenario} / ${provider}`);
+            assert.match(dialogue.at(-1).content,/\[小手机互动：戳一戳\]/);
+            assert.match(dialogue.at(-1).content,/没有附带文字消息/);
+        }
+        assert.equal(JSON.stringify(t),before,'the wire event does not create another stored message');
+    }
+});
+
+test('host raw and streaming poke requests survive system extraction without ending in a model turn',async()=>{
+    const state=freshState(),p=normalizeProfile({name:'Rick',userName:'恒'}),t=newThread(p.id);addMessage(t,'user','刚才的消息');addMessage(t,'assistant','刚才的回复');
+    const request=buildPrompt(p,t,state.settings,{kind:'poke'}),seen=[];
+    const validate=messages=>{const dialogue=messages.filter(m=>m.role!=='system');assert.equal(dialogue.at(-1).role,'user');assert.match(dialogue.at(-1).content,/恒 戳了戳 Rick/);seen.push(dialogue);return dialogue;};
+    const context={mainApi:'openai',eventTypes:{},getRequestHeaders:()=>({}),oai_settings:{chat_completion_source:'makersuite'},getChatCompletionModel:()=> 'test-gemini',generateRaw:async r=>{validate(r.prompt);return '怎么啦？';},createGenerationParameters:async(settings,model,type,messages)=>({generate_data:{model,messages:validate(messages)}}),getStreamingReply:data=>data.choices?.[0]?.delta?.content || ''};
+    const root={SillyTavern:{getContext:()=>context},fetch:async(url,options)=>{assert.equal(JSON.parse(options.body).messages.at(-1).role,'user');return new Response('data: {"choices":[{"delta":{"content":"怎么啦？"}}]}\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});}};
+    const host=createHost(root);for(const stream of [false,true])assert.equal(await host.generate(request,{mode:'host',stream}),'怎么啦？');assert.equal(seen.length,2);
 });
 
 test('avatars accept raster uploads or http image URLs and persist independently of card bindings',()=>{

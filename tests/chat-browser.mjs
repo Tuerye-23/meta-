@@ -25,12 +25,12 @@ try {
     const calls=await page.evaluate(()=>window.mockRequests.length);await page.locator('[data-tool="photo"]').click();await notice('暂未开放');assert.equal(await page.evaluate(()=>window.mockRequests.length),calls);
     await page.locator('[data-tool="emoji"]').click();await page.locator('[data-action="chat-emoji"][data-value="❤️"]').click();const draft=await page.locator('#mc-draft').inputValue();assert.match(draft,/Alpha专属草稿/);assert.match(draft,/❤️/);
     await page.locator('[data-tool="poke"]').click();await idle();assert.equal(await page.locator('#mc-draft').inputValue(),draft);
-    const pokeRequest=await page.evaluate(()=>window.mockRequests.at(-1));assert.match(pokeRequest.prompt.at(-1).content,/来自 测试用户 的「戳一戳」/);assert.match(pokeRequest.systemPrompt,/Mr. meeseeks/);
+    const pokeRequest=await page.evaluate(()=>window.mockRequests.at(-1));assert.equal(pokeRequest.prompt.at(-1).role,'user');assert.match(pokeRequest.prompt.at(-1).content,/测试用户 戳了戳 Alpha/);assert.ok(pokeRequest.prompt.some(m=>m.role==='system' && /来自 测试用户 的「戳一戳」/.test(m.content))); assert.match(pokeRequest.systemPrompt,/Mr. meeseeks/);
     let saved=await state();const alpha=saved.profiles.find(p=>p.name==='Alpha');let thread=saved.threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.filter(m=>m.role==='note' && m.kind==='poke').length,1);
     const last=thread.messages.at(-1);await page.evaluate(()=>window.failOnce=true);await page.locator('[data-action="retry"]').click();await notice('模拟网络失败');await idle();
     thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.at(-1).id,last.id,'failed regeneration preserves the existing reply');
     await page.locator('[data-action="retry"]').click();await idle();thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.filter(m=>m.kind==='poke' && m.role==='note').length,1);assert.notEqual(thread.messages.at(-1).id,last.id);
-    assert.match((await page.evaluate(()=>window.mockRequests.at(-1))).prompt.at(-1).content,/【戳一戳】/);
+    const retried=await page.evaluate(()=>window.mockRequests.at(-1));assert.equal(retried.prompt.at(-1).role,'user');assert.match(retried.prompt.at(-1).content,/小手机互动：戳一戳/);
     // Header and role avatars both lead to this contact's settings and return to the same draft.
     await page.locator('#mc-chat-title').click();await page.locator('[data-action="preview"]').click();assert.match(await page.locator('.mc-preview pre').textContent(),/Alpha专属草稿/);await page.locator('.mc-preview button').click();await page.locator('.mc-back').click();
     assert.equal(await page.locator('#mc-draft').inputValue(),draft);await page.locator('.mc-assistant [data-action="chat-settings"]').first().click();

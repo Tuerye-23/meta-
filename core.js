@@ -2,7 +2,7 @@ import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT } from './prompts.js';
-export const VERSION = '0.7.0';
+export const VERSION = '0.7.1';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -293,7 +293,12 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     if(kind==='proactive')push('user','[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。');
     if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
     push('system',POST_HISTORY);
-    if(kind==='poke')push('system',POKE_PROMPT);
+    if(kind==='poke') {
+        push('system',POKE_PROMPT);
+        // System messages may be extracted by the host/provider. Keep the actual
+        // interaction as the final user turn, without inventing a typed message.
+        push('user','[小手机互动：戳一戳]\n{{user}} 戳了戳 {{char}}。\n这是一条互动事件，没有附带文字消息。');
+    }
     return {systemPrompt:bind(settings.headPrompt ?? HEAD_PROMPT),prompt:messages,omitted:all.length-selected.length,storyClipped};
 }
 
