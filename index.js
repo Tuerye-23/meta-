@@ -15,6 +15,7 @@ class Companion {
     constructor(host, store, state) {
         this.host = host; this.store = store; this.state = state; this.busy = false; this.session = null; this.timer = null; this.clockTimer = null; this.syncTimer=null; this.storyRevision=0; this.disposed=false; this.autoPending=false; this.autoReading=false; this.autoTimer=null; this.autoFailure=''; this.observedOrigin=''; this.qrTimer=null; this.qrAttempts=0;
         this.sound = new MessageSound();
+        this.sound.bind();
         this.ui = new Interface(host, (name, args) => this.action(name, args));
         this.unlisten = host.initEvents(name => {
             if(name==='CHAT_CHANGED') {this.storyRevision++; for(const t of this.state.threads)t.story=null;}
@@ -28,6 +29,9 @@ class Companion {
         this.proactive = new ProactiveController(this);
         this.visibility = () => { this.render(); this.updatePresence(); this.social.tick();void this.proactive.tick(); };
         document.addEventListener('visibilitychange', this.visibility);
+        this.readListener=()=>this.readVisibleThread();
+        window.addEventListener('focus',this.readListener);
+        this.ui.root.addEventListener('scroll',this.readListener,true);
         this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
     }
     current(id = this.state.selected) {
@@ -39,9 +43,16 @@ class Companion {
     }
     viewingThread(id) {return this.ui.open && document.visibilityState==='visible' && this.ui.tab==='chat' && this.ui.chatPage==='thread' && !this.ui.avatarTarget && this.state.selected===id;}
     render() {
-        const t=this.state.threads.find(t=>t.profileId===this.state.selected);
-        if(this.viewingThread(this.state.selected) && markRead(t))this.save().catch(error=>this.ui.notice(error.message,true));
         this.ui.render(this.state, this.busy, this.session); this.paintClock();
+        this.readVisibleThread();
+    }
+    readVisibleThread() {
+        if(this.disposed || !this.viewingThread(this.state.selected) || document.hasFocus?.()===false)return;
+        const t=this.state.threads.find(t=>t.profileId===this.state.selected),last=t?.messages.at(-1);
+        const list=this.ui.content.querySelector('.mc-messages');
+        if(!list || this.ui.chatProfile!==this.state.selected || list.scrollHeight-list.clientHeight-list.scrollTop>24)return;
+        if(last && ![...list.querySelectorAll('[data-message-id]')].some(el=>el.dataset.messageId===last.id))return;
+        if(markRead(t)){this.ui.refreshUnread(this.state);this.save().catch(error=>this.ui.notice(error.message,true));}
     }
     async save() { await this.store.save(this.state); }
     log(message,level='info') {
@@ -54,7 +65,7 @@ class Companion {
         this.busy = true; this.log(title); this.ui.notice(title); this.render();
         try { const result = await fn(); this.log(title+' · 完成'); await this.save(); return result; }
         catch(error){this.log(title+' · '+(error?.message || String(error)),'error');await this.save();throw error;}
-        finally { this.ui.pendingReply=null;this.busy = false; this.render(); this.queueStorySync(); if(this.autoPending)this.queueAutoExtract(); }
+        finally { this.ui.pendingReply=null;this.ui.retryHidden=null;this.busy = false; this.render(); this.queueStorySync(); if(this.autoPending)this.queueAutoExtract(); }
     }
     elapsed(session = this.session) { return session ? session.elapsed + (session.runningSince ? Date.now() - session.runningSince : 0) : 0; }
     updatePresence() {
@@ -100,6 +111,7 @@ class Companion {
             if(userContent!==null) {addMessage(t,'user',userContent,kind);this.ui.clearDraft(kind==='theatre'?'scene':'draft');this.render();await this.save();}
             if(kind==='poke' && !retry){addMessage(t,'note',`${p.userName || '你'} 戳了戳 ${p.name}。`,'poke');this.render();await this.save();}
             const replaced=retry?lastReplyGroup(t):[],replacedIds=new Set(replaced.map(m=>m.id));
+            if(replaced.length){this.ui.retryHidden={profileId:p.id,ids:replacedIds};this.render();}
             await this.refreshProfile(p);
             await this.refreshStory(p,t);
             const outputProfile={...p},isShort=shortChat(outputProfile,kind);
@@ -117,7 +129,7 @@ class Companion {
                 const received=[];
                 for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;received.push(message);}
                 if(automatic && received.length)finishProactive(p,t);
-                if(!retry){receiveMessages(t,received,this.viewingThread(p.id));void this.sound.play(this.state.settings);}
+                if(!retry){receiveMessages(t,received);void this.sound.play(this.state.settings).then(ok=>{if(!ok && !this.disposed){this.log('消息提示音未能播放，请在消息提醒中点击试听。','error');if(this.ui.open)this.ui.notice('提示音未能播放，可在设置 → 消息提醒中点击试听。',true);}});}
             }
             this.render();
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');
@@ -208,6 +220,7 @@ class Companion {
             void this.sound.unlock();
             if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();void this.proactive.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
+            if(name==='chat-unread'){const list=this.ui.content.querySelector('.mc-messages');if(list){list.scrollTop=list.scrollHeight;this.readVisibleThread();}return;}
             if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && (this.ui.contactPage==='detail' || this.ui.contactPage==='chatMode' && this.ui.chatModeDirect) && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';this.ui.chatModeDirect=false;}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
             if(name==='social-avatar'){this.avatars.open('user');return;}
             if(name.startsWith('avatar-') && await this.avatars.handle(name,args))return;
@@ -321,7 +334,7 @@ class Companion {
         }).finally(()=>{this.qrTask=null;});
         return this.qrTask;
     }
-    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.sound.destroy();this.social.destroy();this.proactive.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.sound.destroy();this.social.destroy();this.proactive.destroy();window.removeEventListener('focus',this.readListener);this.ui.root.removeEventListener('scroll',this.readListener,true);document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {

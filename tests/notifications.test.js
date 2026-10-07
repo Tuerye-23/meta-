@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { freshState, normalizeProfile, newThread, addMessage, removeMessage, validateBackup } from '../core.js';
-import { hasUnread, receiveMessages, markRead, notificationPreferences, MessageSound } from '../notifications.js';
+import { hasUnread, receiveMessages, markRead, notificationPreferences, MessageSound, notificationWav } from '../notifications.js';
 import { homeScreen } from '../phone-ui.js';
 import { chatScreen } from '../chat-ui.js';
 
@@ -39,4 +39,32 @@ test('audio mute never creates a context and unavailable or denied audio does no
     assert.equal(await sound.play({notificationVolume:0}),true);assert.equal(created,0);
     assert.equal(await sound.play({}),false);assert.equal(created,1);
     assert.equal(await new MessageSound({}).play({}),false);
+});
+
+
+test('local notification WAVs contain decodable PCM samples, and priming is actually silent',()=>{
+    for(const tone of ['chime','soft','bell','silent']) {
+        const bytes=Buffer.from(notificationWav(tone).split(',')[1],'base64');
+        assert.equal(bytes.subarray(0,4).toString(),'RIFF');assert.equal(bytes.subarray(8,12).toString(),'WAVE');
+        assert.equal(bytes.readUInt32LE(40),bytes.length-44);assert.equal(bytes.readUInt16LE(22),1);
+        assert.equal(bytes.readUInt32LE(24),22050);assert.equal(bytes.readUInt16LE(34),16);
+        assert.equal(bytes.subarray(44).some(v=>v!==0),tone!=='silent');
+    }
+});
+
+test('native media playback uses selected tone and volume without requiring AudioContext',async()=>{
+    const calls=[];class Audio {constructor(){this.dataset={};}pause(){}play(){calls.push({src:this.src,volume:this.volume});return Promise.resolve();}remove(){}}
+    const sound=new MessageSound({Audio});
+    assert.equal(await sound.play({notificationTone:'soft',notificationVolume:.23}),true);
+    assert.deepEqual(calls,[{src:notificationWav('soft'),volume:.23}]);
+    assert.equal(await sound.play({notificationTone:'none'}),true);assert.equal(calls.length,1);sound.destroy();
+    assert.equal(await sound.play({notificationTone:'bell'}),false);
+});
+
+test('blocked native playback falls back to Web Audio, while failure of both returns false',async()=>{
+    let started=0;class Blocked {constructor(){this.dataset={};}pause(){}play(){return Promise.reject(Error('blocked'));}}
+    class Context {constructor(){this.state='running';this.currentTime=0;}createOscillator(){return {frequency:{},connect(){},start(){started++;},stop(){}};}createGain(){return {gain:{setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};}}
+    const sound=new MessageSound({Audio:Blocked,AudioContext:Context});
+    assert.equal(await sound.play({notificationTone:'chime'}),true);assert.equal(started,2);
+    assert.equal(await new MessageSound({Audio:Blocked}).play({}),false);
 });

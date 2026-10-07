@@ -46,7 +46,7 @@ export class Interface {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.id === 'mc-draft') { event.preventDefault(); action('send'); }
         };
         document.addEventListener('keydown', this.keyHandler);
-        this.initStatus();this.bindDrag();this.timeTimer=setInterval(()=>this.homeClock(),1000);
+        this.initStatus();this.bindDrag();this.viewportHandler=()=>this.placePhone();window.visualViewport?.addEventListener('resize',this.viewportHandler);window.visualViewport?.addEventListener('scroll',this.viewportHandler);this.placePhone();this.timeTimer=setInterval(()=>this.homeClock(),1000);
     }
     bindDrag() {
         const header=this.root.querySelector('.mc-header'); const panel=this.root.querySelector('.mc-panel');
@@ -69,19 +69,20 @@ export class Interface {
     }
     placePhone() {
         const panel=this.root.querySelector('.mc-panel');
-        if(window.innerWidth<=600){for(const key of ['left','top','right','bottom','width','height','margin'])panel.style[key]='';return;}
+        const mobile=window.innerWidth<=600;panel.dataset.ttMobileSurface=mobile?'fullscreen-window':'free-window';
+        if(mobile){const vp=window.visualViewport;this.root.style.setProperty('--mc-viewport-height',(vp?.height || window.innerHeight)+'px');this.root.style.setProperty('--mc-viewport-top',(vp?.offsetTop || 0)+'px');this.root.style.setProperty('--mc-viewport-left',(vp?.offsetLeft || 0)+'px');for(const key of ['left','top','right','bottom','width','height','margin'])panel.style[key]='';return;}
         const d=this.desktopPosition;if(!d)return;
         const width=Math.min(d.width,window.innerWidth-10),height=Math.min(d.height,window.innerHeight-10);
         d.left=Math.max(5,Math.min(d.left,window.innerWidth-width-5));d.top=Math.max(5,Math.min(d.top,window.innerHeight-height-5));
         Object.assign(panel.style,{left:d.left+'px',top:d.top+'px',right:'auto',bottom:'auto',width:width+'px',height:height+'px',margin:'0'});
     }
     snapshotView() {
-        if(!this.viewKey)return;
+        if(!this.viewKey || !this.open)return;
         const scroll=this.content.querySelector('.mc-scroll,.mc-messages'); const active=document.activeElement;
         const focused=this.content.contains(active) && active?.name ? {name:active.name,start:active.selectionStart,end:active.selectionEnd,scroll:active.scrollTop} : null;
         this.views.set(this.viewKey,{scroll:scroll?.scrollTop || 0,bottom:!scroll || scroll.scrollHeight-scroll.clientHeight-scroll.scrollTop<32,details:Object.fromEntries([...this.content.querySelectorAll('details')].map((d,i)=>[d.dataset.view || String(i),d.open])),focused});
     }
-    show() { this.lastFocus = document.activeElement; this.open = true; this.root.hidden = false; this.placePhone(); this.root.querySelector('[data-action="close"][aria-label]')?.focus(); }
+    show() { this.lastFocus = document.activeElement; this.open = true; this.root.hidden = false; this.placePhone();const view=this.views.get(this.viewKey),scroll=this.content.querySelector('.mc-scroll,.mc-messages');if(scroll && view)scroll.scrollTop=scroll.classList.contains('mc-messages') && view.bottom?scroll.scrollHeight:view.scroll; this.root.querySelector('[data-action="close"][aria-label]')?.focus(); }
     hide() { this.capture(); this.snapshotView(); this.open = false; this.root.hidden = true; this.lastFocus?.focus?.(); }
     notice(message, error = false) { clearTimeout(this.noticeTimer); const el = this.root.querySelector('#mc-notice'); el.hidden = !message; el.textContent = message; el.classList.toggle('mc-error', error); if(message && !error)this.noticeTimer=setTimeout(()=>{if(!this.root.isConnected)return;el.hidden=true;},8000); }
     capture() {
@@ -150,15 +151,13 @@ export class Interface {
         this.root.querySelector('.mc-back').hidden=this.tab==='home';
         this.root.querySelector('#mc-app-title').textContent=this.tab==='roles'?contactTitle(this):this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
         const threadOpen=this.tab==='chat' && this.chatPage==='thread' && p && !this.avatarTarget;
-        this.root.querySelector('#mc-app-title').hidden=Boolean(threadOpen);
+        this.root.querySelector('#mc-app-title').hidden=Boolean(threadOpen) || this.tab==='home' && !this.avatarTarget;
         this.root.querySelector('#mc-chat-title').hidden=!threadOpen;
         this.root.querySelector('#mc-chat-title').textContent=p?.name || '';this.root.querySelector('#mc-chat-title').setAttribute('aria-label',`设置 ${p?.name || '联系人'}`);
         if(this.avatarTarget)this.root.querySelector('#mc-app-title').textContent='更换头像';
         this.root.querySelector('.mc-back').hidden=this.tab==='home' && !this.avatarTarget;
         this.root.querySelector('.mc-back').setAttribute('aria-label',threadOpen?'返回消息列表':'返回上一页');
-        const otherUnread=state.threads.some(t=>hasUnread(t) && t.profileId!==state.selected);
-        const back=this.root.querySelector('.mc-back');back.querySelector('.mc-unread-dot')?.remove();
-        if(threadOpen && otherUnread)back.insertAdjacentHTML('beforeend','<span class="mc-unread-dot" role="status" aria-label="其他聊天有未读消息"></span>');
+
         this.chatProfile=state.selected;
         const c = this.host.context(); const s = state.settings;
         const disabled = busy ? 'disabled' : '';const api=normalizeApi(s.api);
@@ -188,7 +187,7 @@ export class Interface {
           <div class="mc-toolbar"><button type="button" class="mc-primary" data-action="start-company" ${!p||busy?'disabled':''}>${session?'重新开始':'开始陪伴'}</button><button type="button" data-action="stop-company" ${session?'':'disabled'}>结束陪伴</button><button type="button" data-action="nudge" ${!p||busy?'disabled':''}>让他现在说一句</button></div>
           <p class="mc-muted">主动发消息的开关、间隔与每日上限，在联系人详情的「聊天设置」中调整。这里记录你们一起待着的时间，也可以手动让角色说句话。</p>
           <hr><h3>开一段小剧场</h3>${field('给你们一个场景','scene','',3)}<button type="button" data-action="theatre" ${!p||busy?'disabled':''}>一起演一小段</button></div>`;
-        if (this.tab === 'settings') markup = `<div class="mc-scroll mc-settings"><div class="mc-settings-intro"><span>映间 · 偏好设置</span><small>按需展开，慢慢调整</small></div>${settingStart('api','API 配置','连接模型，设定生成方式','api')}
+        if (this.tab === 'settings') markup = `<div class="mc-scroll mc-settings">${settingStart('api','API 配置','连接模型，设定生成方式','api')}
           <label class="mc-field"><span>生成方式</span><select name="apiMode"><option value="host" ${api.mode==='host'?'selected':''}>沿用酒馆当前配置</option><option value="independent" ${api.mode==='independent'?'selected':''}>独立 API</option></select></label>
           <p class="mc-muted">人设提取、聊天、批注、陪伴和总结都使用这里选择的 API。酒馆模式沿用宿主的模型和采样参数。</p>
           <label class="mc-check"><input type="checkbox" name="apiStream" ${api.stream?'checked':''}>流式输出</label>
@@ -235,6 +234,19 @@ export class Interface {
             if(scroll)scroll.scrollTop=scroll.classList.contains('mc-messages') && (!view || view.bottom) ? scroll.scrollHeight : view?.scroll || 0;
         }
         if(this.pendingReply && busy)this.streamText(this.pendingReply.profileId,this.pendingReply.parts ?? this.pendingReply.text);
+        this.refreshUnread(state);
+    }
+    refreshUnread(state) {
+        const any=state.threads.some(hasUnread),current=state.threads.find(t=>t.profileId===state.selected);
+        const app=this.root.querySelector('[data-tab="chat"] .mc-app-tile');
+        app?.querySelector('.mc-unread-dot')?.remove();if(app && any)app.insertAdjacentHTML('beforeend','<span class="mc-unread-dot" role="status" aria-label="有未读消息"></span>');
+        const back=this.root.querySelector('.mc-back');back.querySelector('.mc-unread-dot')?.remove();
+        if(this.tab==='chat' && this.chatPage==='thread' && any)back.insertAdjacentHTML('beforeend','<span class="mc-unread-dot" role="status" aria-label="有未读消息"></span>');
+        const list=this.content.querySelector('.mc-messages'),follow=list && list.scrollHeight-list.clientHeight-list.scrollTop<32;
+        let jump=this.content.querySelector('[data-action="chat-unread"]');
+        const needsJump=this.tab==='chat' && this.chatPage==='thread' && !this.avatarTarget && hasUnread(current);
+        if(!needsJump){jump?.remove();return;}
+        if(!jump){jump=document.createElement('button');jump.type='button';jump.className='mc-new-message';jump.dataset.action='chat-unread';jump.innerHTML='<span class="mc-unread-dot" aria-hidden="true"></span>新消息 · 跳到底部';this.content.querySelector('.mc-compose')?.before(jump);if(follow)list.scrollTop=list.scrollHeight;}
     }
     soundVolume() {const input=this.content.querySelector('[name="notificationVolume"]');const output=this.content.querySelector('#mc-sound-volume');if(input && output){output.textContent=Math.round(Number(input.value))+'%';input.style.setProperty('--mc-volume-fill',input.value+'%');}}
     initStatus() {
@@ -256,7 +268,7 @@ export class Interface {
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
-    destroy() { window.removeEventListener('online',this.networkHandler);window.removeEventListener('offline',this.networkHandler);for(const event of ['levelchange','chargingchange'])this.battery?.removeEventListener(event,this.batteryHandler);clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
+    destroy() { window.removeEventListener('online',this.networkHandler);window.removeEventListener('offline',this.networkHandler);window.visualViewport?.removeEventListener('resize',this.viewportHandler);window.visualViewport?.removeEventListener('scroll',this.viewportHandler);for(const event of ['levelchange','chargingchange'])this.battery?.removeEventListener(event,this.batteryHandler);clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
 }
 
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}

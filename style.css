@@ -373,3 +373,19 @@
 #mc-root input[type="range"]::-moz-range-track {height:5px;border-radius:9px;background:#bccfed;}
 #mc-root input[type="range"]::-moz-range-progress {height:5px;border-radius:9px;background:#548dff;}
 #mc-root input[type="range"]::-moz-range-thumb {width:12px;height:12px;border-radius:50%;border:2px solid #fff;background:#548dff;}
+
+/* Keep unread replies discoverable while reading earlier messages. */
+#mc-root .mc-new-message {align-self:center;display:flex;align-items:center;gap:7px;flex-shrink:0;margin:0 0 7px;padding:5px 12px;min-height:29px;border:1px solid #ffffffcc;border-radius:18px;background:#f4f7ffe6;color:#4c6d9f;font-size:11px;box-shadow:0 2px 9px #668ac722;}
+#mc-root .mc-new-message .mc-unread-dot {position:static;width:7px;height:7px;box-shadow:none;}
+
+/* The mobile phone occupies the host viewport; desktop shell and drag remain intact. */
+@media(max-width:600px) {
+    #mc-root {inset:auto;top:var(--mc-viewport-top,0px);left:var(--mc-viewport-left,0px);width:100%;height:min(var(--mc-viewport-height,100dvh),calc(var(--tt-base-viewport-height,100dvh) - var(--tt-ime-bottom,0px)));padding:0;}
+    #mc-root .mc-panel {position:absolute;inset:0;margin:0;width:100%;height:100%;max-width:none;max-height:none;border:0;outline:0;border-radius:0;box-shadow:none;padding-top:max(env(safe-area-inset-top,0px),var(--tt-inset-top,0px));padding-left:max(env(safe-area-inset-left,0px),var(--tt-inset-left,0px));padding-right:max(env(safe-area-inset-right,0px),var(--tt-inset-right,0px));padding-bottom:max(env(safe-area-inset-bottom,0px),var(--tt-inset-bottom,0px));}
+    #mc-root .mc-statusbar .mc-island {display:none;}
+    #mc-root .mc-statusbar {height:30px;min-height:30px;padding:4px 20px 0;}
+    #mc-root .mc-header {cursor:default;}
+    #mc-root .mc-panel[data-screen="chat"] .mc-header {cursor:default;}
+}
+
+#mc-root .mc-panel[data-screen="home"] .mc-header {justify-content:flex-end;}

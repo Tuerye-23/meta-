@@ -28,7 +28,9 @@ try {
     await page.locator('[data-tool="poke"]').click();await idle();assert.equal(await page.locator('#mc-draft').inputValue(),draft);
     const pokeRequest=await page.evaluate(()=>window.mockRequests.at(-1));assert.equal(pokeRequest.prompt.at(-1).role,'user');assert.match(pokeRequest.prompt.at(-1).content,/测试用户 戳了戳 Alpha/);assert.ok(pokeRequest.prompt.some(m=>m.role==='system' && /来自 测试用户 的「戳一戳」/.test(m.content))); assert.match(pokeRequest.systemPrompt,/Mr. meeseeks/);
     let saved=await state();const alpha=saved.profiles.find(p=>p.name==='Alpha');let thread=saved.threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.filter(m=>m.role==='note' && m.kind==='poke').length,1);
-    const last=thread.messages.at(-1);await page.evaluate(()=>window.failOnce=true);await page.locator('[data-action="retry"]').click();await notice('模拟网络失败');await idle();
+    const last=thread.messages.at(-1);await page.evaluate(()=>{window.failOnce=true;window.mockDelay=650;});await page.locator('[data-action="retry"]').click();
+    assert.equal(await page.locator(`[data-message-id="${last.id}"]`).count(),0,'hide old reply immediately before generation completes');
+    await notice('模拟网络失败');await idle();assert.equal(await page.locator(`[data-message-id="${last.id}"]`).count(),1,'restore old reply on failure');
     thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.at(-1).id,last.id,'failed regeneration preserves the existing reply');
     await page.locator('[data-action="retry"]').click();await idle();thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.filter(m=>m.kind==='poke' && m.role==='note').length,1);assert.notEqual(thread.messages.at(-1).id,last.id);
     const retried=await page.evaluate(()=>window.mockRequests.at(-1));assert.equal(retried.prompt.at(-1).role,'user');assert.match(retried.prompt.at(-1).content,/小手机互动：戳一戳/);
@@ -65,7 +67,7 @@ try {
     thread=(await state()).threads.find(t=>t.profileId===alpha.id);let group=thread.messages.filter(m=>m.replyId===thread.messages.at(-1).replyId);assert.equal(group.length,5);
     assert.equal(await page.locator(`[data-reply-id="${group[0].replyId}"]`).count(),5);assert.doesNotMatch(await page.locator('.mc-messages').textContent(),/<消息>|<\/消息>/);
     const oldIds=group.map(m=>m.id),oldGroupId=group[0].replyId,userCount=thread.messages.filter(m=>m.role==='user').length;
-    await page.evaluate(()=>window.shortReplyOnce='<消息>只有一条。</消息>');await page.locator('[data-action="retry"]').click();await notice('需 5～10 条');await idle();
+    await page.evaluate(()=>{window.shortReplyOnce='<消息>只有一条。</消息>';window.mockDelay=650;});await page.locator('[data-action="retry"]').click();assert.equal(await page.locator(`[data-reply-id="${oldGroupId}"]`).count(),0,'hide the entire short reply group');await notice('需 5～10 条');await idle();
     thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.at(-1).replyId,oldGroupId);assert.equal(await page.locator(`[data-reply-id="${oldGroupId}"]`).count(),5);
     await page.locator('[data-action="retry"]').click();await idle();thread=(await state()).threads.find(t=>t.profileId===alpha.id);group=thread.messages.filter(m=>m.replyId===thread.messages.at(-1).replyId);
     assert.equal(group.length,5);assert.ok(oldIds.every(id=>!thread.messages.some(m=>m.id===id)));assert.equal(thread.messages.filter(m=>m.role==='user').length,userCount);
@@ -91,7 +93,8 @@ try {
     await page.locator('#mc-draft').fill('流式期间的草稿');await page.locator('#mc-chat-title').click();await page.locator('.mc-back').click();assert.equal(await page.locator('.mc-streaming').count(),2);assert.equal(await page.locator('#mc-draft').inputValue(),'流式期间的草稿');
     await page.evaluate(()=>{window.modeStream.enqueue(new TextEncoder().encode('data: '+JSON.stringify({choices:[{delta:{content:'么呢？</消息><消息>……真是的。</消息><消息>拿你没办法。</消息>'}}]})+'\n\ndata: [DONE]\n\n'));window.modeStream.close();});await idle();
     thread=(await state()).threads.find(t=>t.profileId===alpha.id);group=thread.messages.filter(m=>m.replyId===thread.messages.at(-1).replyId);assert.deepEqual(group.map(m=>m.text),['嗯。','你胡说什么呢？','……真是的。','拿你没办法。']);assert.equal(await page.locator('.mc-streaming').count(),0);
-    const completeGroupId=group[0].replyId;await page.evaluate(()=>window.modeStream=null);await page.locator('[data-action="retry"]').click();await page.waitForFunction(()=>window.modeStream);
+    const completeGroupId=group[0].replyId;await page.evaluate(()=>window.modeStream=null);await page.locator('[data-action="retry"]').click();await page.waitForFunction(()=>window.modeStream);assert.equal(await page.locator(`[data-reply-id="${completeGroupId}"]`).count(),0);
+    await page.locator('#mc-chat-title').click();await page.locator('.mc-back').click();assert.equal(await page.locator(`[data-reply-id="${completeGroupId}"]`).count(),0,'old replies stay hidden after navigation while streaming');
     await page.evaluate(()=>{window.modeStream.enqueue(new TextEncoder().encode('data: '+JSON.stringify({choices:[{delta:{content:'息>半截消息'}}]})+'\n\n'));window.modeStream.close();});await notice('提前结束');await idle();thread=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(thread.messages.at(-1).replyId,completeGroupId);assert.equal(await page.locator('.mc-streaming').count(),0);assert.ok(!thread.messages.some(m=>m.text.includes('半截消息')));
     await page.evaluate(()=>{window.fetch=window.modeOriginalFetch;});await app('settings');await page.locator('[data-section="api"]').evaluate(el=>el.open=true);await page.locator('[name="apiStream"]').uncheck();await page.locator('[data-action="save-api"]').click();await notice('已沿用');
     // Summaries use plain stored bubbles and do not split the last reply group.
