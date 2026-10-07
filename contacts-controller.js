@@ -1,5 +1,6 @@
 import { mainKey, newThread, normalizeProfile } from './core.js';
 import { definitionProfile, recognitionRequest, parseRecognizedNames, personaRequest, parsePersonas } from './persona.js';
+import { chatPreferences } from './chat-mode.js';
 
 export class ContactsController {
     constructor(app){this.app=app;this.revision=0;this.recognition=null;}
@@ -9,6 +10,7 @@ export class ContactsController {
         this.revision++;
         const ui=this.ui;ui.capture();
         if(ui.contactPage==='list'){ui.tab='home';return;}
+        if(ui.contactPage==='chatMode'){ui.contactPage='detail';return;}
         if(ui.contactPage==='picker'){ui.contactPage=['supplements','supplementEntries'].includes(ui.pickerKind)?'supplements':'add';return;}
         if(ui.contactPage==='field'){ui.contactPage=['world','notes'].includes(ui.contactField)?'supplements':['personality','scenario','speech','relationship','userPersona'].includes(ui.contactField)?'field':'detail';if(ui.contactPage==='field')ui.contactField='description';return;}
         if(ui.contactPage==='supplements')ui.contactPage='detail';
@@ -81,8 +83,14 @@ export class ContactsController {
         // Detail navigation is allowed during generation; mutations are locked.
         if(name==='contact-open'){this.revision++;ui.editorId=args.id;ui.contactPage='detail';app.render();return true;}
         if(name==='contact-field'){ui.contactField=args.field;ui.contactPage='field';app.render();return true;}
+        if(name==='contact-mode'){ui.chatModeDirect=false;ui.contactPage='chatMode';app.render();return true;}
         if(name==='contact-supplements'){ui.supplementDraft=this.person().supplementalBooks.map(b=>({...b,ids:b.ids===null?null:[...b.ids]}));ui.contactPage='supplements';app.render();return true;}
         if(app.busy)throw new Error('上一项任务仍在进行，请稍等。');
+        if(name==='contact-mode-save'){
+            Object.assign(this.person(),chatPreferences(ui.values()));ui.resetDraft();await app.save();
+            if(ui.chatModeDirect){ui.tab='chat';ui.chatPage='thread';ui.contactReturn='';ui.chatModeDirect=false;}else ui.contactPage='detail';
+            app.render();ui.notice('聊天方式已保存。');return true;
+        }
         if(name==='contact-add'){ui.contactPage='add';ui.contactCandidates=[];ui.candidateSelection=[];this.recognition=null;}
         if(name==='contact-source'){this.revision++;this.recognition=null;ui.contactSource=args.value;if(args.value==='manual'){ui.contactSource='card';await app.action('add-profile');return true;}}
         if(name==='contact-picker'){await this.picker(args.kind,args.index);return true;}

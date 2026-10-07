@@ -327,3 +327,11 @@
 #mc-root .mc-avatar-editor>.mc-field {margin-top:24px;}
 @media(max-width:360px){#mc-root .mc-inbox {padding-inline:10px;}#mc-root .mc-chat-message {gap:6px;}#mc-root .mc-messages {padding-inline:10px;}#mc-root .mc-chat-tray {padding-inline:20px;gap:9px 12px;}#mc-root #mc-chat-title {font-size:14px;}}
 @media(max-height:550px){#mc-root .mc-panel[data-screen="chat"] .mc-header {height:63px;padding-top:22px;}#mc-root .mc-chat-tray {max-height:30vh;}#mc-root .mc-chat-tray>button>span {width:34px;height:34px;}#mc-root .mc-chat-tray {padding-top:8px;}}
+
+/* Per-contact chat cadence settings. */
+#mc-root .mc-chat-preferences {display:flex;justify-content:flex-end;flex-shrink:0;padding:0 14px 2px;}
+#mc-root .mc-chat-preferences button {display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--mc-muted);font-size:11px;min-height:32px;padding:0 6px;}
+#mc-root .mc-chat-preferences span {font-size:18px;}
+#mc-root .mc-chat-mode-identity {display:flex;align-items:center;gap:12px;margin-bottom:24px;}
+#mc-root .mc-chat-mode-identity .mc-avatar {width:42px;height:42px;border-radius:13px;font-size:21px;}
+#mc-root .mc-chat-message[data-reply-id] {margin-bottom:9px;}

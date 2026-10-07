@@ -1,8 +1,9 @@
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
+import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT } from './prompts.js';
-export const VERSION = '0.7.1';
+export const VERSION = '0.8.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -26,6 +27,7 @@ export function normalizeProfile(value, provenance = {}) {
     }
     profile.personaMode = ['inherit','extracted','manual'].includes(value.personaMode) ? value.personaMode : provenance.personaMode || 'manual';
     profile.avatarImage=avatarSource(value.avatarImage ?? provenance.avatarImage);
+    Object.assign(profile,chatPreferences({replyStyle:value.replyStyle ?? provenance.replyStyle,replyRange:value.replyRange ?? provenance.replyRange}));
     const binding=value.binding ?? provenance.binding;
     profile.binding=binding && typeof binding==='object' ? {avatar:text(binding.avatar),autoBooks:binding.autoBooks===true,books:Array.isArray(binding.books)?binding.books.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[],includeDisabled:binding.includeDisabled===true} : null;
     const supplements=value.supplementalBooks ?? provenance.supplementalBooks;
@@ -56,7 +58,7 @@ export function validateBackup(input) {
         if (out.threads.some(x => x.profileId === t.profileId || x.id === t.id)) throw new Error('备份中有重复会话。');
         const messages = t.messages.map(m => {
             if (!m || typeof m.id !== 'string' || !['user', 'assistant', 'note'].includes(m.role) || typeof m.text !== 'string') throw new Error('备份消息格式有误。');
-            return { id: m.id, role: m.role, text: m.text, kind: text(m.kind), createdAt: Number(m.createdAt) || 0 };
+            return { id: m.id, role: m.role, text: m.text, kind: text(m.kind), createdAt: Number(m.createdAt) || 0,...(m.role==='assistant' && text(m.replyId)?{replyId:text(m.replyId).slice(0,160)}:{}) };
         });
         if (new Set(messages.map(m => m.id)).size !== messages.length) throw new Error('备份中有重复消息 ID。');
         const story = t.story && typeof t.story.text === 'string' ? {
@@ -169,7 +171,7 @@ export function summaryBatch(thread, settings, automatic=false) {
     const through=thread.messages.findIndex(m=>m.id===thread.memory?.throughId);
     const pending=thread.messages.slice(through+1);
     if(automatic && pending.length < settings.summaryEvery) return [];
-    return pending.slice(0,Math.max(0,pending.length-settings.summaryKeep));
+    return pending.slice(0,groupStart(pending,Math.max(0,pending.length-settings.summaryKeep)));
 }
 
 export function parseProfiles(raw) {
@@ -285,7 +287,7 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     push('system',STORY_PROMPT+'\n\n<主线剧情记忆>\n'+memory+'\n</主线剧情记忆>\n<主线正文历史>\n'+prose+(storyClipped?'\n[记录达到发送长度限制，后续内容未提供，不要猜测。]':'')+'\n</主线正文历史>');
     const boundary=thread.messages.findIndex(m=>m.id===thread.memory?.throughId);
     const all=thread.messages.slice(boundary+1).filter(m=>['user','assistant','note'].includes(m.role));
-    const selected=all.slice(-settings.historyMessages);
+    const selected=all.slice(groupStart(all,Math.max(0,all.length-settings.historyMessages)));
     push('system',MEMORY_PROMPT+'\n\n<Meta聊天记忆>\n'+literalMacros(thread.memory?.text || '')+'\n</Meta聊天记忆>'+(all.length>selected.length?'\n[较早的部分 Meta 消息未载入当前窗口，不要假装记得。]':''));
     if(activity)push('system',`[Meta 活动记录]\n当前一起做的事：${activity}\n已一起待了约 ${Math.floor(elapsed/60000)} 分钟。`);
     // Stored conversation is data: names and other macros in user messages stay literal.
@@ -293,8 +295,9 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     if(kind==='proactive')push('user','[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。');
     if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
     push('system',POST_HISTORY);
+    if(kind==='poke')push('system',POKE_PROMPT);
+    if(shortChat(profile,kind))push('system',shortChatPrompt(profile));
     if(kind==='poke') {
-        push('system',POKE_PROMPT);
         // System messages may be extracted by the host/provider. Keep the actual
         // interaction as the final user turn, without inventing a typed message.
         push('user','[小手机互动：戳一戳]\n{{user}} 戳了戳 {{char}}。\n这是一条互动事件，没有附带文字消息。');

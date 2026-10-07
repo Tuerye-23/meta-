@@ -7,6 +7,7 @@ import { definitionProfile } from './persona.js';
 import { ContactsController } from './contacts-controller.js';
 import { SocialController } from './social-controller.js';
 import { AvatarController } from './avatars.js';
+import { replyParts, shortChat, lastReplyGroup } from './chat-mode.js';
 
 class Companion {
     constructor(host, store, state) {
@@ -103,16 +104,22 @@ class Companion {
         await this.job(`正在等待 ${p.name}…`,async()=>{
             if(userContent!==null) {addMessage(t,'user',userContent,kind);this.ui.clearDraft(kind==='theatre'?'scene':'draft');this.render();await this.save();}
             if(kind==='poke' && !retry){addMessage(t,'note',`${p.userName || '你'} 戳了戳 ${p.name}。`,'poke');this.render();await this.save();}
-            const replaced=retry && t.messages[t.messages.length-1]?.role==='assistant'?t.messages[t.messages.length-1]:null;
+            const replaced=retry?lastReplyGroup(t):[],replacedIds=new Set(replaced.map(m=>m.id));
             await this.refreshProfile(p);
             await this.refreshStory(p,t);
-            const request=this.request(p,replaced?{...t,messages:t.messages.filter(m=>m.id!==replaced.id)}:t,kind,quote);
-            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,onText:content=>{this.ui.pendingReply={profileId:p.id,text:content};this.ui.streamText(p.id,content);}},this.state.settings.api);
+            const outputProfile={...p},isShort=shortChat(outputProfile,kind);
+            const request=this.request(outputProfile,replaced.length?{...t,messages:t.messages.filter(m=>!replacedIds.has(m.id))}:t,kind,quote);
+            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,onText:content=>{const parts=replyParts(content,outputProfile,kind,true);this.ui.pendingReply={profileId:p.id,parts};this.ui.streamText(p.id,parts);}},this.state.settings.api);
+            const parts=replyParts(reply,outputProfile,kind);
             this.ui.pendingReply=null;
             if(this.disposed || this.state!==state || !state.profiles.some(person=>person.id===p.id))return;
             if (session && this.session!==session) return;
             if (kind==='annotation') t.annotations.push({quote,reply,label:t.story?.label || '',createdAt:Date.now()});
-            else {if(replaced)removeMessage(t,replaced.id);addMessage(t,'assistant',reply,kind);}
+            else {
+                for(const old of replaced)removeMessage(t,old.id);
+                const replyId=isShort?uid():null;
+                for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;}
+            }
             this.render();
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');
             if(kind!=='annotation' && this.state.settings.autoSummary && summaryBatch(t,this.state.settings,true).length) {
@@ -201,10 +208,11 @@ class Companion {
         try {
             if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
-            if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && this.ui.contactPage==='detail' && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
+            if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && (this.ui.contactPage==='detail' || this.ui.contactPage==='chatMode' && this.ui.chatModeDirect) && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';this.ui.chatModeDirect=false;}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
             if(name==='social-avatar'){this.avatars.open('user');return;}
             if(name.startsWith('avatar-') && await this.avatars.handle(name,args))return;
             if(name==='chat-settings'){this.ui.capture();this.ui.editorId=args.id || this.state.selected;this.ui.contactPage='detail';this.ui.contactReturn='chat';this.ui.tab='roles';this.ui.chatTools=false;this.render();return;}
+            if(name==='chat-mode-settings'){this.ui.capture();this.ui.editorId=this.state.selected;this.ui.contactPage='chatMode';this.ui.contactReturn='chat';this.ui.chatModeDirect=true;this.ui.tab='roles';this.render();return;}
             if(name==='chat-new'){await this.action('tab',{tab:'roles'});return;}
             if(((name.startsWith('contact-') && name!=='contact-chat') || name==='save-supplements') && await this.contacts.handle(name,args))return;
             if(name==='tab') {this.ui.capture();this.ui.avatarTarget=null;this.ui.socialSheet='';this.ui.commentTarget='';this.ui.contactReturn='';this.ui.tab=args.tab;if(args.tab==='chat'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}if(args.tab==='roles'){this.ui.contactPage='list';this.ui.editorId='';}this.render();if(args.tab==='story')await this.loadStoryControls(this.ui.values().memoryBook);return;}

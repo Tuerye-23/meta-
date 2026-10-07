@@ -28,7 +28,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(event.target.name==='replyStyle')this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();});
         root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
@@ -116,13 +116,20 @@ export class Interface {
     filterContacts() {const query=(this.content.querySelector('[name="contactSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-contact-name]'))row.hidden=!row.dataset.contactName.includes(query);}
     filterMessages() {const query=(this.content.querySelector('[name="messageSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-message-search]'))row.hidden=!row.dataset.messageSearch.includes(query);}
     sizeComposer() {const el=this.content.querySelector('#mc-draft');if(el){el.style.height='44px';el.style.height=Math.max(44,Math.min(112,el.scrollHeight))+'px';}}
+    chatModeVisibility() {const field=this.content.querySelector('[data-short-options]');if(field)field.hidden=this.content.querySelector('[name="replyStyle"]')?.value!=='short';}
     streamText(profileId,content) {
         if(this.tab!=='chat' || this.chatPage!=='thread' || this.avatarTarget || this.chatProfile!==profileId)return;
         const list=this.content.querySelector('.mc-messages');if(!list)return;
         const follow=list.scrollHeight-list.clientHeight-list.scrollTop<32;
-        let bubble=list.querySelector('.mc-streaming');
-        if(!bubble){list.querySelector('.mc-empty')?.remove();const holder=document.createElement('div');holder.innerHTML=chatMessage({id:'stream',role:'assistant',text:'',createdAt:Date.now()},this.renderState.profiles.find(p=>p.id===profileId),this.renderState);bubble=holder.firstElementChild;bubble.classList.add('mc-streaming');bubble.querySelector('[data-action="delete-message"]')?.remove();list.append(bubble);}
-        bubble.querySelector('.mc-message-text').textContent=content;if(follow)list.scrollTop=list.scrollHeight;
+        const parts=Array.isArray(content)?content:[content];
+        let bubbles=[...list.querySelectorAll('.mc-streaming')];
+        while(bubbles.length>parts.length)bubbles.pop().remove();
+        for(const [index,part] of parts.entries()) {
+            let bubble=bubbles[index];
+            if(!bubble){list.querySelector('.mc-empty')?.remove();const holder=document.createElement('div');holder.innerHTML=chatMessage({id:'stream-'+index,role:'assistant',text:'',createdAt:Date.now()},this.renderState.profiles.find(p=>p.id===profileId),this.renderState);bubble=holder.firstElementChild;bubble.classList.add('mc-streaming');bubble.querySelector('[data-action="delete-message"]')?.remove();list.append(bubble);bubbles.push(bubble);}
+            bubble.querySelector('.mc-message-text').textContent=part;
+        }
+        if(follow)list.scrollTop=list.scrollHeight;
     }
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     chatDraft(profileId) {return this.drafts.get(`chat:${profileId}:thread::`)?.draft || '';}
@@ -212,7 +219,7 @@ export class Interface {
             else n.value = saved[n.name];
         }
 
-        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();
+        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];
@@ -222,7 +229,7 @@ export class Interface {
             }
             if(scroll)scroll.scrollTop=scroll.classList.contains('mc-messages') && (!view || view.bottom) ? scroll.scrollHeight : view?.scroll || 0;
         }
-        if(this.pendingReply && busy)this.streamText(this.pendingReply.profileId,this.pendingReply.text);
+        if(this.pendingReply && busy)this.streamText(this.pendingReply.profileId,this.pendingReply.parts ?? this.pendingReply.text);
     }
     homeClock() {if(!this.open)return;const now=new Date();const clock=this.content.querySelector('#mc-home-time');if(clock)clock.textContent=now.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});const date=this.content.querySelector('#mc-home-date');if(date)date.textContent=now.toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});}
     clock(milliseconds, paused = false) { const n=this.content.querySelector('#mc-clock'); if(n)n.textContent=`${Math.floor(milliseconds/60000).toString().padStart(2,'0')}:${Math.floor(milliseconds/1000%60).toString().padStart(2,'0')}${paused?' · 已暂停':''}`; }
