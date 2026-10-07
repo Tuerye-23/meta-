@@ -46,7 +46,7 @@ export class Interface {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.id === 'mc-draft') { event.preventDefault(); action('send'); }
         };
         document.addEventListener('keydown', this.keyHandler);
-        this.initStatus();this.bindDrag();this.viewportHandler=()=>this.placePhone();window.visualViewport?.addEventListener('resize',this.viewportHandler);window.visualViewport?.addEventListener('scroll',this.viewportHandler);this.placePhone();this.timeTimer=setInterval(()=>this.homeClock(),1000);
+        this.initStatus();this.bindDrag();this.timeTimer=setInterval(()=>this.homeClock(),1000);
     }
     bindDrag() {
         const header=this.root.querySelector('.mc-header'); const panel=this.root.querySelector('.mc-panel');
@@ -69,8 +69,7 @@ export class Interface {
     }
     placePhone() {
         const panel=this.root.querySelector('.mc-panel');
-        const mobile=window.innerWidth<=600;panel.dataset.ttMobileSurface=mobile?'fullscreen-window':'free-window';
-        if(mobile){const vp=window.visualViewport;this.root.style.setProperty('--mc-viewport-height',(vp?.height || window.innerHeight)+'px');this.root.style.setProperty('--mc-viewport-top',(vp?.offsetTop || 0)+'px');this.root.style.setProperty('--mc-viewport-left',(vp?.offsetLeft || 0)+'px');for(const key of ['left','top','right','bottom','width','height','margin'])panel.style[key]='';return;}
+        if(window.innerWidth<=600){for(const key of ['left','top','right','bottom','width','height','margin'])panel.style[key]='';return;}
         const d=this.desktopPosition;if(!d)return;
         const width=Math.min(d.width,window.innerWidth-10),height=Math.min(d.height,window.innerHeight-10);
         d.left=Math.max(5,Math.min(d.left,window.innerWidth-width-5));d.top=Math.max(5,Math.min(d.top,window.innerHeight-height-5));
@@ -268,7 +267,7 @@ export class Interface {
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
-    destroy() { window.removeEventListener('online',this.networkHandler);window.removeEventListener('offline',this.networkHandler);window.visualViewport?.removeEventListener('resize',this.viewportHandler);window.visualViewport?.removeEventListener('scroll',this.viewportHandler);for(const event of ['levelchange','chargingchange'])this.battery?.removeEventListener(event,this.batteryHandler);clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
+    destroy() { window.removeEventListener('online',this.networkHandler);window.removeEventListener('offline',this.networkHandler);for(const event of ['levelchange','chargingchange'])this.battery?.removeEventListener(event,this.batteryHandler);clearInterval(this.timeTimer); clearTimeout(this.noticeTimer); document.removeEventListener('keydown',this.keyHandler);window.removeEventListener('resize',this.resizeHandler);this.root.remove(); }
 }
 
 function booksOptions(context,selected) {return (context.getWorldInfoNames?.()||[]).map(name=>`<option value="${esc(name)}" ${name===selected?'selected':''}>${esc(name)}</option>`).join('');}
