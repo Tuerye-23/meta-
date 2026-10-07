@@ -1,5 +1,5 @@
 import { normalizeApi, validateApi } from './api-config.js';
-import { addMessage, buildPrompt, canNudge, characterKey, clamp, literalMacros, mainKey, newThread, normalizeProfile, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
+import { addMessage, buildPrompt, characterKey, clamp, literalMacros, mainKey, newThread, normalizeProfile, removeMessage, summaryBatch, tagNames, uid, validateBackup, VERSION } from './core.js';
 import { createHost, StateStore } from './host.js';
 import { Interface } from './ui.js';
 import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
@@ -9,6 +9,7 @@ import { SocialController } from './social-controller.js';
 import { AvatarController } from './avatars.js';
 import { replyParts, shortChat, lastReplyGroup } from './chat-mode.js';
 import { MessageSound, markRead, receiveMessages, notificationPreferences } from './notifications.js';
+import { ProactiveController, finishProactive } from './proactive.js';
 
 class Companion {
     constructor(host, store, state) {
@@ -24,7 +25,8 @@ class Companion {
             if (this.ui.open) this.render();
         });
         this.social = new SocialController(this);this.contacts=new ContactsController(this);this.avatars=new AvatarController(this);
-        this.visibility = () => { this.render(); this.updatePresence(); this.social.tick(); };
+        this.proactive = new ProactiveController(this);
+        this.visibility = () => { this.render(); this.updatePresence(); this.social.tick();void this.proactive.tick(); };
         document.addEventListener('visibilitychange', this.visibility);
         this.bindSettingsButton(); this.bindWandButton(); this.render(); this.queueStorySync(); this.queueAutoExtract();
     }
@@ -60,26 +62,12 @@ class Companion {
         if (!s) return;
         if (s.runningSince) { s.elapsed += Date.now() - s.runningSince; s.runningSince = 0; }
         if (this.ui.open && document.visibilityState === 'visible' && this.state.selected === s.profileId) {
-            s.runningSince = Date.now(); s.nextAt = Date.now() + s.interval;
-            this.clockTimer = setInterval(() => this.paintClock(), 1000); this.schedule();
+            s.runningSince = Date.now();
+            this.clockTimer = setInterval(() => this.paintClock(), 1000);
         }
         this.paintClock();
     }
     paintClock() { this.ui.clock(this.elapsed(), Boolean(this.session && !this.session.runningSince)); }
-    schedule() {
-        clearTimeout(this.timer); const s = this.session; if (!s?.runningSince || s.count >= s.max) return;
-        this.timer = setTimeout(async () => {
-            if (this.session !== s) return;
-            const now=Date.now();
-            if (canNudge(s,now,{visible:document.visibilityState==='visible',open:this.ui.open,busy:this.busy,hostBusy:this.host.busy,selected:this.state.selected})) {
-                // Reserve the next slot before any asynchronous operation.
-                s.nextAt=now+s.interval;
-                try { await this.reply('proactive', '', s); s.count++; }
-                catch(error) { this.ui.notice(error?.message || String(error),true); if(s.runningSince)s.elapsed+=Date.now()-s.runningSince;s.runningSince=0; clearInterval(this.clockTimer); this.clockTimer=null; return; }
-            } else s.nextAt=now+s.interval;
-            if (this.session===s) this.schedule();
-        }, Math.max(1000,s.nextAt-Date.now()));
-    }
     queueStorySync() {
         clearTimeout(this.syncTimer);
         if(this.disposed)return;
@@ -105,8 +93,8 @@ class Companion {
         const r=buildPrompt(p,t,this.state.settings,{kind,quote,activity:session?.activity || '',elapsed:this.elapsed(session)});
         r.systemPrompt=literalMacros(r.systemPrompt);r.prompt=r.prompt.map(m=>({...m,content:literalMacros(m.content)}));return r;
     }
-    async reply(kind='chat', quote='', session=null, userContent=null, retry=false) {
-        const {p,t}=this.current(session?.profileId || this.state.selected);
+    async reply(kind='chat', quote='', session=null, userContent=null, retry=false, targetId=null, automatic=false) {
+        const {p,t}=this.current(targetId || session?.profileId || this.state.selected);
         const state=this.state;
         await this.job(`正在等待 ${p.name}…`,async()=>{
             if(userContent!==null) {addMessage(t,'user',userContent,kind);this.ui.clearDraft(kind==='theatre'?'scene':'draft');this.render();await this.save();}
@@ -120,6 +108,7 @@ class Companion {
             const parts=replyParts(reply,outputProfile,kind);
             this.ui.pendingReply=null;
             if(this.disposed || this.state!==state || !state.profiles.some(person=>person.id===p.id))return;
+            if(automatic && !p.proactiveEnabled)return;
             if (session && this.session!==session) return;
             if (kind==='annotation') t.annotations.push({quote,reply,label:t.story?.label || '',createdAt:Date.now()});
             else {
@@ -127,6 +116,7 @@ class Companion {
                 const replyId=isShort?uid():null;
                 const received=[];
                 for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;received.push(message);}
+                if(automatic && received.length)finishProactive(p,t);
                 if(!retry){receiveMessages(t,received,this.viewingThread(p.id));void this.sound.play(this.state.settings);}
             }
             this.render();
@@ -216,7 +206,7 @@ class Companion {
     async action(name,args={}) {
         try {
             void this.sound.unlock();
-            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();return;}
+            if(name==='open') {this.ui.show();this.render();this.updatePresence();this.queueStorySync();this.queueAutoExtract(true);this.installQR();this.social.tick();void this.proactive.tick();return;}
             if(name==='close') {this.ui.hide();this.updatePresence();return;}
             if(name==='back'){this.ui.capture();if(this.ui.avatarTarget){this.avatars.close();return;}if(this.ui.tab==='chat' && this.ui.chatPage==='thread'){this.ui.chatPage='list';this.ui.chatTools=false;this.ui.emojiOpen=false;}else if(this.ui.tab==='roles' && (this.ui.contactPage==='detail' || this.ui.contactPage==='chatMode' && this.ui.chatModeDirect) && this.ui.contactReturn==='chat'){this.ui.tab='chat';this.ui.chatPage='thread';this.ui.contactReturn='';this.ui.chatModeDirect=false;}else if(this.ui.tab==='roles')this.contacts.back();else this.ui.tab='home';this.render();return;}
             if(name==='social-avatar'){this.avatars.open('user');return;}
@@ -284,7 +274,7 @@ class Companion {
             if(name==='send') {if(!v.draft?.trim())return;await this.reply('chat','',null,v.draft.trim());return;}
             if(name==='retry') {if(!t.messages.length)throw new Error('先发一条消息。');const last=t.messages[t.messages.length-1];await this.reply(['poke','proactive','theatre'].includes(last.kind)?last.kind:'chat','',null,null,true);return;}
             if(name==='theatre') {if(!v.scene?.trim())throw new Error('先给小剧场写一个场景。');const scene=v.scene.trim();this.ui.clearDraft('scene');this.ui.tab='chat';this.ui.chatPage='thread';await this.reply('theatre','',null,`[Meta 小剧场]\n我们在这里演一段独立的小场景：${scene}\n保持双方人设与关系，你开始。`);return;}
-            if(name==='start-company') {if(this.session)await this.action('stop-company');const s=this.state.settings;s.activity=v.activity?.trim() || '待一会儿';s.intervalMinutes=clamp(v.intervalMinutes,2,120,10);s.maxProactive=clamp(v.maxProactive,1,20,3);this.session={id:uid(),profileId:p.id,activity:s.activity,interval:s.intervalMinutes*60000,max:s.maxProactive,count:0,elapsed:0,runningSince:0,nextAt:0};addMessage(t,'note',`开始一起${s.activity}。`);this.updatePresence();await this.save();this.render();this.ui.notice('已开始陪伴。你可以切到聊天页随时说话。');return;}
+            if(name==='start-company') {if(this.session)await this.action('stop-company');const s=this.state.settings;s.activity=v.activity?.trim() || '待一会儿';this.session={id:uid(),profileId:p.id,activity:s.activity,elapsed:0,runningSince:0};addMessage(t,'note',`开始一起${s.activity}。`);this.updatePresence();await this.save();this.render();this.ui.notice('已开始陪伴。你可以切到聊天页随时说话。');return;}
             if(name==='nudge') {await this.reply('proactive');return;}
         } catch(error) {console.error('[映间]',error);this.log(name+' · '+(error?.message || String(error)),'error');await this.save();this.ui.notice(error?.message || String(error),true);this.render();}
     }
@@ -331,7 +321,7 @@ class Companion {
         }).finally(()=>{this.qrTask=null;});
         return this.qrTask;
     }
-    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.sound.destroy();this.social.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
+    destroy() {this.disposed=true;this.storyRevision++;clearTimeout(this.syncTimer);clearTimeout(this.autoTimer);clearTimeout(this.qrTimer);clearTimeout(this.timer);clearInterval(this.clockTimer);this.sound.destroy();this.social.destroy();this.proactive.destroy();document.removeEventListener('visibilitychange',this.visibility);this.unlisten?.();this.menuObserver?.disconnect();this.ui.destroy();this.settingsButton?.remove();this.wandButton?.remove();}
 }
 
 async function initialize() {

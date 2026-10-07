@@ -22,6 +22,7 @@ try {
     const idle=()=>page.waitForFunction(()=>!document.getElementById('mc-status').textContent.includes('正在输入'));
     const app=async tab=>{await page.locator('.mc-home-button').click();await page.locator(`.mc-app[data-tab="${tab}"]`).click();};
     const count=()=>page.evaluate(()=>window.oscillators);
+    const chatSettings=async()=>{const details=page.locator('.mc-contact-chat-settings');if(!await details.evaluate(el=>el.open))await details.locator('summary').click();};
     const font=process.env.META_FONT_FILE?(await readFile(process.env.META_FONT_FILE)).toString('base64'):'';
     const injectFont=async()=>{if(font){await page.addStyleTag({content:`@font-face{font-family:MetaTestCJK;src:url(data:font/woff2;base64,${font})}#mc-root{font-family:MetaTestCJK,system-ui!important}`});await page.evaluate(()=>document.fonts.ready);}};
     await page.goto(url);await injectFont();await page.locator('#mc-wand-button').click();await page.waitForFunction(()=>document.querySelectorAll('#mc-profile option').length===2);await idle();
@@ -36,7 +37,7 @@ try {
     await page.locator('[data-tab="chat"]').click();assert.equal(await page.locator(`[data-id="${alpha.id}"] .mc-unread-dot`).count(),1);
     await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
     // Short replies are one notification even when five separate bubbles arrive.
-    await page.locator('#mc-chat-title').click();await page.locator('[data-action="contact-mode"]').click();await page.locator('[name="replyStyle"]').selectOption('short');await page.locator('[name="replyRange"]').selectOption('5-10');await page.locator('[data-action="contact-mode-save"]').click();await page.locator('.mc-back').click();
+    await page.locator('#mc-chat-title').click();await chatSettings();await page.locator('[name="replyStyle"]').selectOption('short');await page.locator('[name="replyRange"]').selectOption('5-10');await page.locator('[data-action="contact-mode-save"]').click();await page.locator('.mc-back').click();
     let before=await count();await page.locator('#mc-draft').fill('发一组短句');await page.locator('[data-action="send"]').click();await page.locator('.mc-home-button').click();await idle();assert.equal(await count(),before+2);
     let t=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(t.unreadIds.length,5);assert.equal(new Set(t.messages.filter(m=>t.unreadIds.includes(m.id)).map(m=>m.replyId)).size,1);
     // Refresh keeps dots and never replays a stored sound.

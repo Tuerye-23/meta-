@@ -1,6 +1,7 @@
 import { mainKey, newThread, normalizeProfile } from './core.js';
 import { definitionProfile, recognitionRequest, parseRecognizedNames, personaRequest, parsePersonas } from './persona.js';
 import { chatPreferences } from './chat-mode.js';
+import { proactivePreferences, reserveProactive } from './proactive.js';
 
 export class ContactsController {
     constructor(app){this.app=app;this.revision=0;this.recognition=null;}
@@ -83,13 +84,20 @@ export class ContactsController {
         // Detail navigation is allowed during generation; mutations are locked.
         if(name==='contact-open'){this.revision++;ui.editorId=args.id;ui.contactPage='detail';app.render();return true;}
         if(name==='contact-field'){ui.contactField=args.field;ui.contactPage='field';app.render();return true;}
-        if(name==='contact-mode'){ui.chatModeDirect=false;ui.contactPage='chatMode';app.render();return true;}
+        if(name==='contact-mode'){return true;}
         if(name==='contact-supplements'){ui.supplementDraft=this.person().supplementalBooks.map(b=>({...b,ids:b.ids===null?null:[...b.ids]}));ui.contactPage='supplements';app.render();return true;}
         if(app.busy)throw new Error('上一项任务仍在进行，请稍等。');
         if(name==='contact-mode-save'){
-            Object.assign(this.person(),chatPreferences(ui.values()));ui.resetDraft();await app.save();
+            const p=this.person(),values=ui.values(),preferences=proactivePreferences(values);
+            if(preferences.proactiveEnabled && (!Number.isFinite(Number(values.proactiveHours)) || Number(values.proactiveHours)<.5 || Number(values.proactiveHours)>720))throw new Error('发送间隔请填写 0.5～720 小时。');
+            if(preferences.proactiveEnabled && (!Number.isInteger(Number(values.proactiveDaily)) || Number(values.proactiveDaily)<1 || Number(values.proactiveDaily)>100))throw new Error('每日次数请填写 1～100 的整数。');
+            const reset=p.proactiveEnabled!==preferences.proactiveEnabled || p.proactiveHours!==preferences.proactiveHours;
+            Object.assign(p,chatPreferences(values),preferences);
+            const t=app.state.threads?.find(t=>t.profileId===p.id);
+            if(t)reserveProactive(p,t,Date.now(),reset);
+            ui.resetDraft(['replyStyle','replyRange','proactiveEnabled','proactiveHours','proactiveDaily']);await app.save();
             if(ui.chatModeDirect){ui.tab='chat';ui.chatPage='thread';ui.contactReturn='';ui.chatModeDirect=false;}else ui.contactPage='detail';
-            app.render();ui.notice('聊天方式已保存。');return true;
+            app.render();ui.notice('聊天设置已保存。');return true;
         }
         if(name==='contact-add'){ui.contactPage='add';ui.contactCandidates=[];ui.candidateSelection=[];this.recognition=null;}
         if(name==='contact-source'){this.revision++;this.recognition=null;ui.contactSource=args.value;if(args.value==='manual'){ui.contactSource='card';await app.action('add-profile');return true;}}

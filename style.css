@@ -333,6 +333,14 @@
 /* Per-contact chat cadence settings. */
 #mc-root .mc-chat-mode-identity {display:flex;align-items:center;gap:12px;margin-bottom:24px;}
 #mc-root .mc-chat-mode-identity .mc-avatar {width:42px;height:42px;border-radius:13px;font-size:21px;}
+#mc-root .mc-contact-chat-settings {padding:0;margin:0;border-radius:0;background:transparent;border-block:1px solid #6686b016;}
+#mc-root .mc-contact-chat-settings>summary {display:flex;align-items:center;gap:12px;min-height:54px;padding:12px 15px;font-size:13px;list-style:none;cursor:pointer;}
+#mc-root .mc-contact-chat-settings>summary::-webkit-details-marker {display:none;}
+#mc-root .mc-contact-chat-settings[open]>summary .mc-row-arrow {transform:rotate(90deg);}
+#mc-root .mc-contact-chat-body {padding:2px 15px 16px;background:#ffffff28;}
+#mc-root .mc-contact-chat-body .mc-field {margin:10px 0 15px;}
+#mc-root .mc-contact-chat-body .mc-contact-primary {margin:4px 0 0;}
+#mc-root .mc-contact-chat-body .mc-muted {font-size:11px;line-height:1.75;margin:2px 0 13px;}
 #mc-root .mc-chat-message[data-reply-id] {margin-bottom:9px;}
 
 /* Phone status and message alerts. */

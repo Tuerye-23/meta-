@@ -1,10 +1,11 @@
 import { notificationPreferences } from './notifications.js';
+import { proactivePreferences, proactiveSchedule } from './proactive.js';
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
 import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
-import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT } from './prompts.js';
-export const VERSION = '0.9.0';
+import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT, PROACTIVE_PROMPT } from './prompts.js';
+export const VERSION = '0.10.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -29,6 +30,7 @@ export function normalizeProfile(value, provenance = {}) {
     profile.personaMode = ['inherit','extracted','manual'].includes(value.personaMode) ? value.personaMode : provenance.personaMode || 'manual';
     profile.avatarImage=avatarSource(value.avatarImage ?? provenance.avatarImage);
     Object.assign(profile,chatPreferences({replyStyle:value.replyStyle ?? provenance.replyStyle,replyRange:value.replyRange ?? provenance.replyRange}));
+    Object.assign(profile,proactivePreferences({proactiveEnabled:value.proactiveEnabled ?? provenance.proactiveEnabled,proactiveHours:value.proactiveHours ?? provenance.proactiveHours,proactiveDaily:value.proactiveDaily ?? provenance.proactiveDaily}));
     const binding=value.binding ?? provenance.binding;
     profile.binding=binding && typeof binding==='object' ? {avatar:text(binding.avatar),autoBooks:binding.autoBooks===true,books:Array.isArray(binding.books)?binding.books.filter(b=>typeof b?.name==='string').map(b=>({name:b.name,ids:Array.isArray(b.ids)?b.ids.filter(id=>typeof id==='string'):null})):[],includeDisabled:binding.includeDisabled===true} : null;
     const supplements=value.supplementalBooks ?? provenance.supplementalBooks;
@@ -42,7 +44,7 @@ export function normalizeProfile(value, provenance = {}) {
 }
 
 export function newThread(profileId) {
-    return { id: uid(), profileId, messages: [], unreadIds: [], memory: { text: '', throughId: '' }, story: null, annotations: [] };
+    return { id: uid(), profileId, messages: [], unreadIds: [], proactive:proactiveSchedule(), memory: { text: '', throughId: '' }, story: null, annotations: [] };
 }
 
 export function validateBackup(input) {
@@ -69,6 +71,7 @@ export function validateBackup(input) {
             floors: Array.isArray(t.story.floors) ? t.story.floors.filter(f => Number.isInteger(f.index) && typeof f.body === 'string').map(f => ({ index: f.index, name: text(f.name), body: f.body })) : [],
         } : null;
         out.threads.push({ id: t.id, profileId: t.profileId, messages, story,
+            proactive:proactiveSchedule(t.proactive),
             unreadIds:Array.isArray(t.unreadIds)?[...new Set(t.unreadIds.filter(id=>messages.some(m=>m.id===id && m.role==='assistant')))]:[],
             memory: { text: text(t.memory?.text), throughId: messages.some(m => m.id === t.memory?.throughId) ? t.memory.throughId : '' },
             annotations: Array.isArray(t.annotations) ? t.annotations.filter(a => typeof a?.quote === 'string' && typeof a?.reply === 'string').map(a => ({ quote: a.quote, reply: a.reply, label: text(a.label), createdAt: Number(a.createdAt) || 0 })) : [],
@@ -294,9 +297,9 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     if(activity)push('system',`[Meta 活动记录]\n当前一起做的事：${activity}\n已一起待了约 ${Math.floor(elapsed/60000)} 分钟。`);
     // Stored conversation is data: names and other macros in user messages stay literal.
     for(const m of selected)messages.push({role:m.role==='note'?'system':m.role,content:literalMacros(m.role==='note'?'[Meta 活动记录]\n'+m.text:m.text)});
-    if(kind==='proactive')push('user','[陪伴触发] 根据双方关系、正在一起做的事和之前的谈话，自然地说一两句。可以延续话题或分享想法；不虚构我刚刚发过消息，不强制撒娇。');
     if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
     push('system',POST_HISTORY);
+    if(kind==='proactive')push('system',PROACTIVE_PROMPT);
     if(kind==='poke')push('system',POKE_PROMPT);
     if(shortChat(profile,kind))push('system',shortChatPrompt(profile));
     if(kind==='poke') {
@@ -304,6 +307,7 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
         // interaction as the final user turn, without inventing a typed message.
         push('user','[小手机互动：戳一戳]\n{{user}} 戳了戳 {{char}}。\n这是一条互动事件，没有附带文字消息。');
     }
+    if(kind==='proactive')push('user',`[小手机事件：主动联系]\n当前本机时间：${new Date().toLocaleString('zh-CN',{hour12:false})}。\n请由 {{char}} 主动发来消息。此事件没有附带 {{user}} 的新发言。`);
     return {systemPrompt:bind(settings.headPrompt ?? HEAD_PROMPT),prompt:messages,omitted:all.length-selected.length,storyClipped};
 }
 

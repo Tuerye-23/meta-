@@ -30,7 +30,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(event.target.name==='replyStyle')this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(['replyStyle','proactiveEnabled'].includes(event.target.name))this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();if(event.target.name==='notificationVolume')this.soundVolume();});
         root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
@@ -118,7 +118,7 @@ export class Interface {
     filterContacts() {const query=(this.content.querySelector('[name="contactSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-contact-name]'))row.hidden=!row.dataset.contactName.includes(query);}
     filterMessages() {const query=(this.content.querySelector('[name="messageSearch"]')?.value || '').toLowerCase();for(const row of this.content.querySelectorAll('[data-message-search]'))row.hidden=!row.dataset.messageSearch.includes(query);}
     sizeComposer() {const el=this.content.querySelector('#mc-draft');if(el){el.style.height='44px';el.style.height=Math.max(44,Math.min(112,el.scrollHeight))+'px';}}
-    chatModeVisibility() {const field=this.content.querySelector('[data-short-options]');if(field)field.hidden=this.content.querySelector('[name="replyStyle"]')?.value!=='short';}
+    chatModeVisibility() {const field=this.content.querySelector('[data-short-options]');if(field)field.hidden=this.content.querySelector('[name="replyStyle"]')?.value!=='short';const proactive=this.content.querySelector('[data-proactive-options]');if(proactive)proactive.hidden=this.content.querySelector('[name="proactiveEnabled"]')?.value!=='on';}
     streamText(profileId,content) {
         if(this.tab!=='chat' || this.chatPage!=='thread' || this.avatarTarget || this.chatProfile!==profileId)return;
         const list=this.content.querySelector('.mc-messages');if(!list)return;
@@ -184,9 +184,9 @@ export class Interface {
           ${t?.annotations?.length ? `<h3>你们留下的批注</h3>${t.annotations.map(a => `<article class="mc-floor"><blockquote>${esc(a.quote)}</blockquote><div>${esc(a.reply)}</div><small>${esc(a.label)}</small></article>`).join('')}` : ''}</div>`;
         if (this.tab === 'company') markup = `<div class="mc-scroll"><div class="mc-company-card"><span class="mc-orbit">◌</span><strong>${session ? `和 ${esc(state.profiles.find(x=>x.id===session.profileId)?.name)} 一起` : '一起挂着'}</strong><p>${session ? esc(session.activity) : '打开这个空间，各自做点事，也能随时说话。'}</p><div id="mc-clock">00:00</div></div>
           <label class="mc-field"><span>一起做什么</span><input name="activity" value="${esc(s.activity)}" placeholder="陪我写东西 / 待一会儿 / 一起听歌"></label>
-          <div class="mc-two">${number('主动搭话间隔（分钟）','intervalMinutes',s.intervalMinutes,2,120)}${number('本次最多主动发几条','maxProactive',s.maxProactive,1,20)}</div>
+
           <div class="mc-toolbar"><button type="button" class="mc-primary" data-action="start-company" ${!p||busy?'disabled':''}>${session?'重新开始':'开始陪伴'}</button><button type="button" data-action="stop-company" ${session?'':'disabled'}>结束陪伴</button><button type="button" data-action="nudge" ${!p||busy?'disabled':''}>让他现在说一句</button></div>
-          <p class="mc-muted">主动搭话仅在映间打开且应用在前台时运行。计时无需调用模型，生成消息会使用当前 API；关闭面板时暂停，重新打开后继续计时。重启后需重新开始陪伴。</p>
+          <p class="mc-muted">主动发消息的开关、间隔与每日上限，在联系人详情的「聊天设置」中调整。这里记录你们一起待着的时间，也可以手动让角色说句话。</p>
           <hr><h3>开一段小剧场</h3>${field('给你们一个场景','scene','',3)}<button type="button" data-action="theatre" ${!p||busy?'disabled':''}>一起演一小段</button></div>`;
         if (this.tab === 'settings') markup = `<div class="mc-scroll mc-settings"><div class="mc-settings-intro"><span>映间 · 偏好设置</span><small>按需展开，慢慢调整</small></div>${settingStart('api','API 配置','连接模型，设定生成方式','api')}
           <label class="mc-field"><span>生成方式</span><select name="apiMode"><option value="host" ${api.mode==='host'?'selected':''}>沿用酒馆当前配置</option><option value="independent" ${api.mode==='independent'?'selected':''}>独立 API</option></select></label>
