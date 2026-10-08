@@ -51,8 +51,13 @@ try {
     // Reload retains the precise deadline; several missed intervals make only one request, then quota stops it.
     const deadline=t.proactive.nextAt;await page.reload();await injectFont();await page.locator('#mc-wand-button').click();await idle();assert.equal((await thread(alpha.id)).proactive.nextAt,deadline);assert.equal(await requests(),0);
     await advance(3*3600000);await received(alpha.id,'2026-10-08',2);assert.equal(await requests(),1);assert.equal((await thread(alpha.id)).messages.length,8);
+    await app('chat');await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();
+    assert.deepEqual(await page.locator('.mc-chat-timestamp').allTextContents(),['10:30','13:30']);
+    assert.equal(await page.locator('.mc-chat-timestamp + .mc-chat-message').count(),2);
+    await page.screenshot({path:path.join(artifacts,`proactive-times-v0106-${viewport.width}.png`)});
     await advance(3600000);assert.equal(await requests(),1);assert.equal(await count(alpha.id,'2026-10-08'),2);
     await advance(24*3600000);await received(alpha.id,'2026-10-09',1);assert.equal(await requests(),2);
+    const labels=await page.locator('.mc-chat-timestamp').allTextContents();assert.equal(labels.length,3);assert.match(labels[0],/10.*8.*10:30/);assert.equal(labels[2],'14:30');
     // Saving a new mode or limit retains today's usage; off/on re-arms time without clearing quota.
     await settings(alpha.id);await page.locator('[name="replyStyle"]').selectOption('long');await page.locator('[name="proactiveEnabled"]').selectOption('off');await saved();assert.equal((await thread(alpha.id)).proactive.nextAt,0);
     await advance(4*3600000);assert.equal(await requests(),2);await page.locator('[name="proactiveEnabled"]').selectOption('on');await page.locator('[name="proactiveHours"]').fill('2');await page.locator('[name="proactiveDaily"]').fill('1');await saved();

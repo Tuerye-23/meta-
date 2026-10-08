@@ -3,7 +3,7 @@ import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
 import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { contactsScreen, contactTitle } from './contacts-ui.js';
 import { VERSION } from './core.js';
-import { chatScreen, chatMessage } from './chat-ui.js';
+import { chatScreen, chatMessage, chatTimestamp } from './chat-ui.js';
 import { avatarScreen } from './avatars.js';
 import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
 
@@ -126,9 +126,19 @@ export class Interface {
         const parts=Array.isArray(content)?content:[content];
         let bubbles=[...list.querySelectorAll('.mc-streaming')];
         while(bubbles.length>parts.length)bubbles.pop().remove();
+        const createdAt=this.pendingReply?.createdAt ?? Date.now();
+        if(!bubbles.length){
+            list.querySelector('.mc-stream-timestamp')?.remove();
+            if(parts.length){
+                const hidden=this.retryHidden?.profileId===profileId?this.retryHidden.ids:new Set();
+                const previous=this.renderState.threads.find(t=>t.profileId===profileId)?.messages.filter(m=>!hidden.has(m.id)).at(-1);
+                const holder=document.createElement('div');holder.innerHTML=chatTimestamp({createdAt},previous);
+                if(holder.firstElementChild){holder.firstElementChild.classList.add('mc-stream-timestamp');list.append(holder.firstElementChild);}
+            }
+        }
         for(const [index,part] of parts.entries()) {
             let bubble=bubbles[index];
-            if(!bubble){list.querySelector('.mc-empty')?.remove();const holder=document.createElement('div');holder.innerHTML=chatMessage({id:'stream-'+index,role:'assistant',text:'',createdAt:Date.now()},this.renderState.profiles.find(p=>p.id===profileId),this.renderState);bubble=holder.firstElementChild;bubble.classList.add('mc-streaming');bubble.querySelector('[data-action="delete-message"]')?.remove();list.append(bubble);bubbles.push(bubble);}
+            if(!bubble){list.querySelector('.mc-empty')?.remove();const holder=document.createElement('div');holder.innerHTML=chatMessage({id:'stream-'+index,role:'assistant',text:'',createdAt},this.renderState.profiles.find(p=>p.id===profileId),this.renderState);bubble=holder.firstElementChild;bubble.classList.add('mc-streaming');bubble.querySelector('[data-action="delete-message"]')?.remove();list.append(bubble);bubbles.push(bubble);}
             bubble.querySelector('.mc-message-text').textContent=part;
         }
         if(follow)list.scrollTop=list.scrollHeight;

@@ -20,6 +20,32 @@ test('inbox times use local calendar days including yesterday and earlier years'
     assert.equal(conversationTime(new Date(2026,9,6,23,59).getTime(),now),'昨天');assert.match(conversationTime(new Date(2025,1,1).getTime(),now),/2025/);
 });
 
+const timeLabels=html=>[...html.matchAll(/<div class="mc-chat-timestamp"[^>]*>([\s\S]*?)<\/div>/g)].map(match=>match[1].replace(/<[^>]*>/g,''));
+test('a later proactive reply starts a new time section without requiring a user message',()=>{
+    const state=freshState(),p=normalizeProfile({name:'Rick'}),t=newThread(p.id);
+    state.profiles=[p];state.threads=[t];state.selected=p.id;
+    const at=(hour,minute=0)=>{const date=new Date();date.setHours(hour,minute,0,0);return date.getTime();};
+    addMessage(t,'user','你好').createdAt=at(8);
+    addMessage(t,'assistant','你好').createdAt=at(8,1);
+    const later=addMessage(t,'assistant','吃了吗','proactive');later.createdAt=at(10);
+    const last=addMessage(t,'assistant','我刚吃完','proactive');last.createdAt=at(10);last.replyId=later.replyId='short-group';
+    const html=chatScreen(state,{chatPage:'thread'},false);
+    assert.deepEqual(timeLabels(html),['08:00','10:00']);
+    assert.ok(html.indexOf('10:00')<html.indexOf('吃了吗'));
+    assert.deepEqual(timeLabels(chatScreen(state,{chatPage:'thread',retryHidden:{profileId:p.id,ids:new Set([later.id,last.id])}},true)),['08:00']);
+});
+test('time sections include five-minute gaps and local midnight, and survive reopening stored history',()=>{
+    const state=freshState(),p=normalizeProfile({name:'Rick'}),t=newThread(p.id);
+    state.profiles=[p];state.threads=[t];state.selected=p.id;
+    const start=new Date(2025,11,31,23,50).getTime();
+    for(const [i,minutes] of [0,4,9,10,11].entries())addMessage(t,'assistant','消息'+i).createdAt=start+minutes*60000;
+    const labels=timeLabels(chatScreen(validateBackup(state),{chatPage:'thread'},false));
+    assert.equal(labels.length,3);
+    assert.match(labels[0],/2025.*12.*31.*23:50/);
+    assert.match(labels[1],/2025.*12.*31.*23:59/);
+    assert.match(labels[2],/1.*1.*00:00/);
+});
+
 test('poke appends the approved prompt to regular chat definitions and history without changing original message roles',()=>{
     const state=freshState(),p=normalizeProfile({name:'Rick',userName:'恒',avatarImage:'https://images.test/secret.png',description:'Rick原始人设'}),t=newThread(p.id);
     state.social.avatar='data:image/png;base64,AAAA';addMessage(t,'user','刚才的话题');addMessage(t,'assistant','前一次回复');addMessage(t,'note','恒 戳了戳 Rick。','poke');

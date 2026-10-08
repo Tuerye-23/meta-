@@ -24,6 +24,22 @@ const click=s=>{if(s.startsWith('[data-tab=') && !$(s))$('[data-action="tab"][da
 const fill=(name,value)=>{assert.ok($(`[name="${name}"]`),name);$(`[name="${name}"]`).value=value;};
 const switchRole=name=>{const select=$('#mc-profile');select.value=[...select.options].find(o=>o.textContent===name).value;select.dispatchEvent(new window.Event('change'));};
 try {
+ {
+ const {Interface}=await import('../ui.js');const {freshState,normalizeProfile,newThread,addMessage}=await import('../core.js');
+ const state=freshState(),p=normalizeProfile({name:'时间测试'}),t=newThread(p.id),start=new Date(2026,9,8,8).getTime();
+ state.profiles=[p];state.threads=[t];state.selected=p.id;addMessage(t,'user','你好').createdAt=start;addMessage(t,'assistant','你好').createdAt=start;
+ const ui=new Interface({context:()=>window.mockContext},()=>{});
+ try {
+    ui.tab='chat';ui.chatPage='thread';ui.render(state,true);ui.show();ui.pendingReply={profileId:p.id,parts:['吃了吗'],createdAt:start+2*3600000};
+    ui.streamText(p.id,ui.pendingReply.parts);ui.streamText(p.id,['吃了吗','我刚吃完']);
+    assert.equal(ui.content.querySelectorAll('.mc-chat-timestamp').length,2);assert.equal(ui.content.querySelectorAll('.mc-stream-timestamp').length,1);
+    assert.equal(ui.content.querySelector('.mc-stream-timestamp time').dateTime,new Date(start+2*3600000).toISOString());
+    ui.tab='home';ui.render(state,true);ui.tab='chat';ui.render(state,true);assert.equal(ui.content.querySelectorAll('.mc-chat-timestamp').length,2);
+    // Failed generation restores the original time sections along with the old messages.
+    ui.pendingReply=null;ui.render(state,false);assert.equal(ui.content.querySelectorAll('.mc-chat-timestamp').length,1);assert.equal(ui.content.querySelectorAll('.mc-streaming').length,0);
+    addMessage(t,'assistant','吃了吗','proactive').createdAt=start+2*3600000;ui.render(state,false);assert.equal(ui.content.querySelectorAll('.mc-chat-timestamp').length,2);
+ } finally {ui.destroy();}
+ }
  await import(pathToFileURL(path.join(base,'index.js')).href);document.dispatchEvent(new window.Event('DOMContentLoaded'));
  await wait(()=>$('#mc-wand-button'),'initialization');assert.equal($('#mc-launcher'),null);click('#mc-wand-button');
  await wait(()=>$('#mc-profile').options.length===2 && !$('#mc-status').textContent.includes('正在输入'),'automatic extraction');click('[data-tab="roles"]');

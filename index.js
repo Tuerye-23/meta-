@@ -116,7 +116,7 @@ class Companion {
             await this.refreshStory(p,t);
             const outputProfile={...p},isShort=shortChat(outputProfile,kind);
             const request=this.request(outputProfile,replaced.length?{...t,messages:t.messages.filter(m=>!replacedIds.has(m.id))}:t,kind,quote);
-            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,onText:content=>{const parts=replyParts(content,outputProfile,kind,true);this.ui.pendingReply={profileId:p.id,parts};this.ui.streamText(p.id,parts);}},this.state.settings.api);
+            const reply=await this.host.generate({systemPrompt:request.systemPrompt,prompt:request.prompt,onText:content=>{const parts=replyParts(content,outputProfile,kind,true);this.ui.pendingReply={profileId:p.id,parts,createdAt:this.ui.pendingReply?.createdAt ?? Date.now()};this.ui.streamText(p.id,parts);}},this.state.settings.api);
             const parts=replyParts(reply,outputProfile,kind);
             this.ui.pendingReply=null;
             if(this.disposed || this.state!==state || !state.profiles.some(person=>person.id===p.id))return;
