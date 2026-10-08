@@ -5,7 +5,7 @@ import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
 import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT, PROACTIVE_PROMPT } from './prompts.js';
-export const VERSION = '0.10.3';
+export const VERSION = '0.10.4';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;

@@ -294,7 +294,11 @@ class Companion {
     }
     bindSettingsButton() {
         const target=document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
-        if(!target)return;const wrap=document.createElement('div');wrap.className='extension_container';wrap.id='mc-extension-settings';const button=document.createElement('button');button.type='button';button.className='menu_button';button.textContent='映间 · 打开 Meta 旁聊';button.addEventListener('click',()=>this.action('open'));wrap.append(button);target.append(wrap);this.settingsButton=wrap;
+        if(!target)return;
+        const wrap=document.createElement('div');wrap.className='extension_container';wrap.id='mc-extension-settings';
+        wrap.innerHTML='<div class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b>映间小手机</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content"><button type="button" class="menu_button">打开小手机</button></div></div>';
+        wrap.querySelector('button').addEventListener('click',()=>this.action('open'));
+        target.append(wrap);this.settingsButton=wrap;
     }
     bindWandButton() {
         const attach=()=>{const menu=document.getElementById('extensionsMenu');if(!menu)return false;if(!document.getElementById('mc-wand-button')){const button=document.createElement('button');button.type='button';button.id='mc-wand-button';button.className='list-group-item flex-container flexGap5 interactable';button.innerHTML='<i class="fa-solid fa-mobile-screen" aria-hidden="true"></i><span>映间小手机</span>';button.addEventListener('click',()=>this.action('open'));menu.append(button);this.wandButton=button;}return true;};
