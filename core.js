@@ -3,15 +3,16 @@ import { proactivePreferences, proactiveSchedule } from './proactive.js';
 import { freshSocial, normalizeSocial } from './social.js';
 import { apiDefaults, normalizeApi } from './api-config.js';
 import { avatarSource } from './images.js';
+import { normalizeAttachment, normalizeOutbox, normalizeStickers } from './chat-media.js';
 import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT, PROACTIVE_PROMPT } from './prompts.js';
-export const VERSION = '0.10.6';
+export const VERSION = '0.11.0';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
 
 export function freshState() {
-    return { schema: 1, version: VERSION, social:freshSocial(), profiles: [], threads: [], logs: [], extractions: {}, selected: '', settings: {
+    return { schema: 1, version: VERSION, social:freshSocial(), stickers:[], profiles: [], threads: [], logs: [], extractions: {}, selected: '', settings: {
         includeStory: true, recentFloors: 12, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', headPrompt: HEAD_PROMPT, aiPrompt: AI_PROMPT,
         includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
@@ -44,7 +45,7 @@ export function normalizeProfile(value, provenance = {}) {
 }
 
 export function newThread(profileId) {
-    return { id: uid(), profileId, messages: [], unreadIds: [], proactive:proactiveSchedule(), memory: { text: '', throughId: '' }, story: null, annotations: [] };
+    return { id: uid(), profileId, messages: [], outbox:[], unreadIds: [], proactive:proactiveSchedule(), memory: { text: '', throughId: '' }, story: null, annotations: [] };
 }
 
 export function validateBackup(input) {
@@ -61,16 +62,17 @@ export function validateBackup(input) {
         if (out.threads.some(x => x.profileId === t.profileId || x.id === t.id)) throw new Error('备份中有重复会话。');
         const messages = t.messages.map(m => {
             if (!m || typeof m.id !== 'string' || !['user', 'assistant', 'note'].includes(m.role) || typeof m.text !== 'string') throw new Error('备份消息格式有误。');
-            return { id: m.id, role: m.role, text: m.text, kind: text(m.kind), createdAt: Number(m.createdAt) || 0,...(m.role==='assistant' && text(m.replyId)?{replyId:text(m.replyId).slice(0,160)}:{}) };
+            return { id: m.id, role: m.role, text: m.text, kind: text(m.kind), createdAt: Number(m.createdAt) || 0,...(m.role==='assistant' && text(m.replyId)?{replyId:text(m.replyId).slice(0,160)}:{}),...(m.role==='user' && text(m.batchId)?{batchId:text(m.batchId).slice(0,160)}:{}),...(m.attachment?{attachment:normalizeAttachment(m.attachment)}:{}) };
         });
         if (new Set(messages.map(m => m.id)).size !== messages.length) throw new Error('备份中有重复消息 ID。');
+        const outbox=normalizeOutbox(t.outbox);if(outbox.some(m=>messages.some(sent=>sent.id===m.id)))throw new Error('备份中有重复待发送消息 ID。');
         const story = t.story && typeof t.story.text === 'string' ? {
             key: text(t.story.key), label: text(t.story.label), text: t.story.text.slice(0, 200000),
             cutoff: Number(t.story.cutoff), capturedAt: Number(t.story.capturedAt) || 0, frozen: false,
             proseText:typeof t.story.proseText==='string'?t.story.proseText.slice(0,200000):undefined,memoryText:text(t.story.memoryText).slice(0,200000),
             floors: Array.isArray(t.story.floors) ? t.story.floors.filter(f => Number.isInteger(f.index) && typeof f.body === 'string').map(f => ({ index: f.index, name: text(f.name), body: f.body })) : [],
         } : null;
-        out.threads.push({ id: t.id, profileId: t.profileId, messages, story,
+        out.threads.push({ id: t.id, profileId: t.profileId, messages, story, outbox,
             proactive:proactiveSchedule(t.proactive),
             unreadIds:Array.isArray(t.unreadIds)?[...new Set(t.unreadIds.filter(id=>messages.some(m=>m.id===id && m.role==='assistant')))]:[],
             memory: { text: text(t.memory?.text), throughId: messages.some(m => m.id === t.memory?.throughId) ? t.memory.throughId : '' },
@@ -79,6 +81,7 @@ export function validateBackup(input) {
     }
     for (const p of out.profiles) if (!out.threads.some(t => t.profileId === p.id)) out.threads.push(newThread(p.id));
     out.social=normalizeSocial(input.social,[...ids]);
+    out.stickers=normalizeStickers(input.stickers);
     out.logs=Array.isArray(input.logs)?input.logs.filter(l=>typeof l?.message==='string').slice(-200).map(l=>({createdAt:Number(l.createdAt)||0,level:l.level==='error'?'error':'info',message:l.message.slice(0,800)})):[];
     out.qrInstalled=input.qrInstalled===true;
     out.selected = ids.has(input.selected) ? input.selected : out.profiles[0]?.id || '';
@@ -296,7 +299,7 @@ export function buildPrompt(profile, thread, settings, { kind = 'chat', quote = 
     push('system',MEMORY_PROMPT+'\n\n<Meta聊天记忆>\n'+literalMacros(thread.memory?.text || '')+'\n</Meta聊天记忆>'+(all.length>selected.length?'\n[较早的部分 Meta 消息未载入当前窗口，不要假装记得。]':''));
     if(activity)push('system',`[Meta 活动记录]\n当前一起做的事：${activity}\n已一起待了约 ${Math.floor(elapsed/60000)} 分钟。`);
     // Stored conversation is data: names and other macros in user messages stay literal.
-    for(const m of selected)messages.push({role:m.role==='note'?'system':m.role,content:literalMacros(m.role==='note'?'[Meta 活动记录]\n'+m.text:m.text)});
+    for(const m of selected)messages.push({role:m.role==='note'?'system':m.role,content:literalMacros(m.role==='note'?'[Meta 活动记录]\n'+m.text:m.text),...(m.role==='user' && m.attachment?.kind==='image'?{images:[m.attachment.source]}:{})});
     if(kind==='annotation')messages.push({role:'user',content:literalMacros('请对这段另一个世界的片段留一句你自己的批注：\n'+quote)});
     push('system',POST_HISTORY);
     if(kind==='proactive')push('system',PROACTIVE_PROMPT);

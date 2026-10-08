@@ -1,4 +1,5 @@
 import { literalMacros } from './core.js';
+import { multimodalContent } from './chat-media.js';
 
 import { hasOwn, API_PARAMETERS, apiParameters, optionalNumber, validateApi } from './api-config.js';
 
@@ -9,7 +10,7 @@ export function independentBody(request,value) {
     for(const m of request.prompt || []) {
         if(m.role==='system' && api.provider==='claude'){system.push(literalMacros(m.content));continue;}
         if(!['system','user','assistant'].includes(m.role))throw new Error('API 消息只能使用 system、user 或 assistant 角色。');
-        messages.push({role:m.role,content:literalMacros(m.content)});
+        messages.push({role:m.role,content:multimodalContent({...m,content:literalMacros(m.content)},api.provider)});
     }
     // Older Claude gateways require a user turn before the assistant acknowledgement.
     if(api.provider==='claude' && messages[0]?.role==='assistant')messages.unshift({role:'user',content:'[后台任务开始] 请执行系统中的任务说明。'});
@@ -89,8 +90,8 @@ export function createIndependentClient(root,context) {
         async generate(request,value) {
             const {api,body}=independentBody(request,value);
             if(api.contextLimit) {
-                const material=[body.system || '',...body.messages.map(m=>m.content)].join('\n');
-                const c=context();const estimate=typeof c.getTokenCountAsync==='function'?await c.getTokenCountAsync(material):Math.ceil(material.length/2);
+                const material=[body.system || '',...body.messages.map(m=>Array.isArray(m.content)?m.content.filter(p=>p.type==='text').map(p=>p.text).join('\n'):m.content)].join('\n');
+                const c=context();const imageCount=body.messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(p=>['image','image_url'].includes(p.type)).length:0),0);const estimate=(typeof c.getTokenCountAsync==='function'?await c.getTokenCountAsync(material):Math.ceil(material.length/2))+imageCount*1600;
                 if(estimate+(Number(api.maxTokens)||0)>Number(api.contextLimit))throw new Error(`本次估算输入约 ${estimate} tokens，超过你设置的独立 API 上下文检查上限（${api.contextLimit}）。可调大或清空此项。`);
             }
             return responseText(await requestJson(api,'generate',body,request.onText));

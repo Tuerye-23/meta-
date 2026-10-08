@@ -55,5 +55,6 @@ export function groupStart(messages,index) {
     if(index<0 || index>=messages.length)return index;
     const message=messages[index];
     if(message.role==='assistant' && message.replyId)while(index>0 && messages[index-1].role==='assistant' && messages[index-1].replyId===message.replyId)index--;
+    if(message.role==='user' && message.batchId)while(index>0 && messages[index-1].role==='user' && messages[index-1].batchId===message.batchId)index--;
     return index;
 }

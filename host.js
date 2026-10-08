@@ -1,5 +1,6 @@
 import { createIndependentClient, readEventStream, responseText } from './api.js';
 import { characterKey, chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
+import { multimodalContent } from './chat-media.js';
 
 export function createHost(root = globalThis) {
     const context = () => {
@@ -35,14 +36,29 @@ export function createHost(root = globalThis) {
             if(api.mode==='independent')return independent.generate(request,api);
             const c=context();
             if(this.busy)throw new Error('主线正在生成，请等这一轮结束。');
-            if(api.stream) {
+            const pictures=request.prompt.some(m=>m.images?.length);
+            if(api.stream || pictures) {
                 const completion=typeof c.createGenerationParameters==='function'?c:await (completionModule ??= import('/scripts/openai.js'));
                 const mainApi=c.mainApi ?? (await (scriptModule ??= import('/script.js'))).main_api;
-                if(mainApi!=='openai')throw new Error('沿用酒馆的流式输出需要聊天补全 API。');
+                if(mainApi!=='openai')throw new Error(pictures?'发送图片需要使用支持看图的聊天补全 API。':'沿用酒馆的流式输出需要聊天补全 API。');
                 if(typeof completion.createGenerationParameters!=='function')throw new Error('当前酒馆缺少流式接口，请使用独立 API 的流式输出。');
                 const settings=JSON.parse(JSON.stringify(completion.oai_settings ?? c.chatCompletionSettings));
                 const model=completion.getChatCompletionModel(settings);
-                let messages=[{role:'system',content:literalMacros(request.systemPrompt)},...request.prompt.map(m=>({...m,content:literalMacros(m.content)}))];
+                const imageProvider=settings.chat_completion_source==='claude'?'claude':'openai';
+                const prompt=[];
+                for(const message of request.prompt){
+                    const images=[];
+                    for(const source of message.images || []) {
+                        if(settings.chat_completion_source==='makersuite' && /^https?:/.test(source)) {
+                            let response,blob;const imageController=new AbortController(),imageTimer=setTimeout(()=>imageController.abort(),30000);
+                            try{response=await root.fetch(source,{credentials:'omit',referrerPolicy:'no-referrer',signal:imageController.signal});blob=await response.blob();}catch{throw new Error('图床图片无法读取或读取超时，请换一个直链或使用本地上传。');}finally{clearTimeout(imageTimer);}
+                            if(!response.ok || !/^image\/(jpeg|png|webp)/.test(blob.type) || blob.size>1200000)throw new Error('图床图片读取失败或过大，请使用本地上传。');
+                            const bytes=new Uint8Array(await blob.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));images.push(`data:${blob.type};base64,${btoa(binary)}`);
+                        }else images.push(source);
+                    }
+                    prompt.push({...message,images});
+                }
+                let messages=[{role:'system',content:literalMacros(request.systemPrompt)},...prompt.map(m=>({role:m.role,content:multimodalContent({...m,content:literalMacros(m.content)},imageProvider)}))];
                 const type=c.eventTypes?.CHAT_COMPLETION_PROMPT_READY;
                 if(type){const event={chat:messages,dryRun:false};await c.eventSource?.emit?.(type,event);messages=event.chat;}
                 const {generate_data}=await completion.createGenerationParameters(settings,model,'quiet',messages);
@@ -52,7 +68,7 @@ export function createHost(root = globalThis) {
                 try {
                     const ready=c.eventTypes?.CHAT_COMPLETION_SETTINGS_READY;
                     if(ready)await c.eventSource?.emit?.(ready,generate_data);
-                    generate_data.stream=true;
+                    generate_data.stream=api.stream===true;
                     const response=await root.fetch('/api/backends/chat-completions/generate',{method:'POST',headers:c.getRequestHeaders(),body:JSON.stringify(generate_data),signal:controller.signal});
                     if(!response.ok)throw new Error(`酒馆 API 请求失败（${response.status}）。`);
                     if(!/text\/event-stream/i.test(response.headers.get('content-type') || ''))return responseText(await response.json());

@@ -13,7 +13,7 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.chatPage='list';this.chatTools=false;this.emojiOpen=false;this.contactReturn='';this.avatarTarget=null;this.avatarSerial=0;
+        this.chatPage='list';this.chatTools=false;this.chatMedia='';this.contactReturn='';this.avatarTarget=null;this.avatarSerial=0;
         this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];this.sourceDraft={cards:[],personaBook:"",personaEntries:[]};this.contactPage="list";this.editorId="";this.contactField="";this.contactSource="card";this.contactCandidates=[];this.candidateSelection=[];this.supplementDraft=[];this.pickerSelection=[];this.pickerEntries=[];this.pickerKind="";
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
@@ -43,6 +43,7 @@ export class Interface {
                 if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
                 else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
             }
+            if(event.key==='Enter' && event.target.id==='mc-draft' && !event.isComposing && event.keyCode!==229 && !event.shiftKey && !event.ctrlKey && !event.metaKey){event.preventDefault();action('chat-stage');return;}
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && event.target.id === 'mc-draft') { event.preventDefault(); action('send'); }
         };
         document.addEventListener('keydown', this.keyHandler);
@@ -83,7 +84,13 @@ export class Interface {
     }
     show() { this.lastFocus = document.activeElement; this.open = true; this.root.hidden = false; this.placePhone();const view=this.views.get(this.viewKey),scroll=this.content.querySelector('.mc-scroll,.mc-messages');if(scroll && view)scroll.scrollTop=scroll.classList.contains('mc-messages') && view.bottom?scroll.scrollHeight:view.scroll; this.root.querySelector('[data-action="close"][aria-label]')?.focus(); }
     hide() { this.capture(); this.snapshotView(); this.open = false; this.root.hidden = true; this.lastFocus?.focus?.(); }
-    notice(message, error = false) { clearTimeout(this.noticeTimer); const el = this.root.querySelector('#mc-notice'); el.hidden = !message; el.textContent = message; el.classList.toggle('mc-error', error); if(message && !error)this.noticeTimer=setTimeout(()=>{if(!this.root.isConnected)return;el.hidden=true;},8000); }
+    notice(message, error = false) {
+        clearTimeout(this.noticeTimer);
+        const list=this.content.querySelector('.mc-messages'),follow=this.open && list && list.scrollHeight-list.clientHeight-list.scrollTop<32;
+        const el=this.root.querySelector('#mc-notice');el.hidden=!message;el.textContent=message;el.classList.toggle('mc-error',error);
+        if(follow)list.scrollTop=list.scrollHeight;
+        if(message && !error)this.noticeTimer=setTimeout(()=>{if(!this.root.isConnected)return;el.hidden=true;},8000);
+    }
     capture() {
         if (!this.previous) return;
         const values = {};
@@ -273,7 +280,7 @@ export class Interface {
         const dialog = document.createElement('dialog'); dialog.className='mc-preview';
         const title=document.createElement('h3');title.textContent='本次发送内容';
         const p=document.createElement('p');p.textContent=`较早消息未载入：${request.omitted} 条。其他扩展仍可能通过酒馆事件调整最终请求。`;
-        const pre=document.createElement('pre');pre.textContent=request.systemPrompt+'\n\n'+request.prompt.map(m=>`[${m.role}]\n${m.content}`).join('\n\n');
+        const pre=document.createElement('pre');pre.textContent=request.systemPrompt+'\n\n'+request.prompt.map(m=>`[${m.role}]\n${m.content}${m.images?.length?'\n[附带 '+m.images.length+' 张图片]':''}`).join('\n\n');
         const close=document.createElement('button');close.textContent='关闭';close.addEventListener('click',()=>dialog.close());
         dialog.append(title,p,pre,close);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
     }
