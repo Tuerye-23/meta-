@@ -129,7 +129,8 @@ class Companion {
                 const received=[];
                 for(const part of parts){const message=addMessage(t,'assistant',part,kind);if(replyId)message.replyId=replyId;received.push(message);}
                 if(automatic && received.length)finishProactive(p,t);
-                if(!retry){receiveMessages(t,received);void this.sound.play(this.state.settings).then(ok=>{if(!ok && !this.disposed){this.log('消息提示音未能播放，请在消息提醒中点击试听。','error');if(this.ui.open)this.ui.notice('提示音未能播放，可在设置 → 消息提醒中点击试听。',true);}});}
+                receiveMessages(t,received);
+                void this.sound.play(this.state.settings).then(ok=>{if(!ok && !this.disposed){this.log('消息提示音未能播放，请在消息提醒中点击试听。','error');if(this.ui.open)this.ui.notice('提示音未能播放，可在设置 → 消息提醒中点击试听。',true);}});
             }
             this.render();
             this.ui.notice(request.omitted || request.storyClipped ? `收到回复。${request.omitted?'较早部分消息未载入，可在设置中整理记忆。':''}${request.storyClipped?'剧情达到发送长度上限，可调整设置。':''}` : '');

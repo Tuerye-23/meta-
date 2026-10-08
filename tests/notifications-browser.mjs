@@ -12,8 +12,11 @@ try {
  for(const viewport of [{width:1280,height:800},{width:390,height:844},{width:320,height:650}]) {
     const ctx=await browser.newContext({viewport,isMobile:viewport.width<=600,hasTouch:viewport.width<=600});const page=await ctx.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.addInitScript(()=>{
-        window.sounds=[];
-        const play=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){if(this.dataset.mcTone && this.dataset.mcTone!=='silent')window.sounds.push({tone:this.dataset.mcTone,volume:this.volume});return play.call(this);};
+        window.sounds=[];window.confirmedSounds=[];
+        const play=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){
+            const sound=this.dataset.mcTone && this.dataset.mcTone!=='silent'?{tone:this.dataset.mcTone,volume:this.volume}:null;
+            const playback=play.call(this);if(sound){window.sounds.push(sound);Promise.resolve(playback).then(()=>window.confirmedSounds.push(sound),()=>{});}return playback;
+        };
         // Exercise the media path used by native hosts without any Web Audio support.
         window.AudioContext=undefined;window.webkitAudioContext=undefined;
         const battery=new EventTarget();battery.level=.63;battery.charging=true;window.mockBattery=battery;
@@ -44,9 +47,29 @@ try {
     // Refresh keeps dots and never replays a stored sound.
     await page.reload();await injectFont();await page.locator('#mc-wand-button').click();await idle();assert.equal(await count(),0);assert.equal(await page.locator('[data-tab="chat"] .mc-unread-dot').count(),1);
     await app('chat');await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
-    // Retry replaces a group without notification, and failure leaves both group and read state alone.
-    before=await count();await page.locator('[data-action="retry"]').click();await idle();assert.equal(await count(),before);
-    await page.evaluate(()=>window.failOnce=true);await page.locator('[data-action="retry"]').click();await idle();assert.equal(await count(),before);assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
+    // Successful regeneration is a new arrival too, including both of the reported waiting screens.
+    await page.evaluate(()=>window.mockDelay=650);
+    before=await count();const old=(await state()).threads.find(t=>t.profileId===alpha.id).messages.at(-1);
+    await page.locator('[data-action="retry"]').click();await page.locator('.mc-home-button').click();await idle();
+    assert.equal(await count(),before+1,'regeneration must sound once while waiting on the phone home');
+    t=(await state()).threads.find(t=>t.profileId===alpha.id);assert.equal(t.unreadIds.length,5);assert.notEqual(t.messages.at(-1).id,old.id);
+    assert.equal(await page.locator('[data-tab="chat"] .mc-unread-dot').count(),1);
+    await page.screenshot({path:path.join(artifacts,`retry-home-unread-v0103-${viewport.width}.png`)});
+    await page.locator('[data-tab="chat"]').click();assert.equal(await page.locator(`[data-id="${alpha.id}"] .mc-unread-dot`).count(),1);
+    await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
+    before=await count();await page.locator('[data-action="retry"]').click();await page.locator('.mc-home-button').click();await page.locator('.mc-header [data-action="close"]').click();await idle();
+    assert.equal(await count(),before+1,'regeneration must sound once while the phone is closed');
+    assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,5);
+    await page.locator('#mc-wand-button').click();await idle();assert.equal(await page.locator('[data-tab="chat"] .mc-unread-dot').count(),1);
+    await page.locator('[data-tab="chat"]').click();assert.equal(await page.locator(`[data-id="${alpha.id}"] .mc-unread-dot`).count(),1);
+    await page.screenshot({path:path.join(artifacts,`retry-closed-inbox-v0103-${viewport.width}.png`)});
+    await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
+    // Failed regeneration produces no arrival and restores the old group without a false reminder.
+    before=await count();const priorGroup=(await state()).threads.find(t=>t.profileId===alpha.id).messages.at(-1).replyId;
+    await page.evaluate(()=>window.failOnce=true);await page.locator('[data-action="retry"]').click();await page.locator('.mc-home-button').click();await idle();
+    assert.equal(await count(),before);assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);assert.equal(await page.locator('[data-tab="chat"] .mc-unread-dot').count(),0);
+    assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).messages.at(-1).replyId,priorGroup);
+    await app('chat');await page.locator(`[data-action="chat-open"][data-id="${alpha.id}"]`).click();
     // A response while the phone is closed is still unread when reopened.
     await page.evaluate(()=>window.mockDelay=550);await page.locator('#mc-draft').fill('收起手机等回复');await page.locator('[data-action="send"]').click();await page.locator('.mc-header [data-action="close"]').click();await idle();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,5);
     await page.locator('#mc-wand-button').click();await idle();assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,0);
@@ -83,6 +106,7 @@ try {
     await page.locator('#mc-draft').fill('Alpha待收消息');await page.locator('[data-action="send"]').click();await app('roles');await page.locator(`[data-action="contact-open"][data-id="${beta.id}"]`).click();await page.locator('[data-action="contact-chat"]').click();await idle();
     assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).unreadIds.length,5);assert.equal((await state()).threads.find(t=>t.profileId===beta.id).unreadIds.length,0);assert.equal(await page.locator('.mc-back .mc-unread-dot').count(),1);
     await page.locator('.mc-back').click();assert.equal(await page.locator(`[data-id="${alpha.id}"] .mc-unread-dot`).count(),1);await page.screenshot({path:path.join(artifacts,`unread-inbox-v090-${viewport.width}.png`)});
-    assert.deepEqual(errors,[]);await ctx.close();console.log(`Notifications ${viewport.width}px: real HTML Audio without Web Audio / volume / mute / short-group / retry and failure / unread and restart / close and cross-contact / status bar passed`);
+    await page.waitForFunction(()=>window.confirmedSounds.length===window.sounds.length);assert.deepEqual(await page.evaluate(()=>window.confirmedSounds),await page.evaluate(()=>window.sounds));
+    assert.deepEqual(errors,[]);await ctx.close();console.log(`Notifications ${viewport.width}px: real HTML Audio without Web Audio / volume / mute / short-group / successful retry at home and closed phone / failure without reminder / unread and restart / close and cross-contact / status bar passed`);
  }
 }finally{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
