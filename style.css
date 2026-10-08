@@ -380,3 +380,24 @@
 
 
 #mc-root .mc-panel[data-screen="home"] .mc-header {justify-content:flex-end;}
+
+/* Text editing sits directly on the page; labels and the caret indicate focus. */
+#mc-root #mc-content textarea,
+#mc-root #mc-content input:is(:not([type]),[type="text"],[type="search"],[type="url"],[type="email"],[type="tel"],[type="password"],[type="number"]) {
+    background:transparent !important;
+    border:0 !important;
+    border-radius:0;
+    box-shadow:none !important;
+    backdrop-filter:none;
+    outline:none;
+    caret-color:#548dff;
+}
+#mc-root #mc-content .mc-contact-search,
+#mc-root #mc-content .mc-chat-compose {
+    background:transparent;
+    border:0;
+    border-radius:0;
+    box-shadow:none;
+    backdrop-filter:none;
+}
+#mc-root #mc-content .mc-field:focus-within>span {color:var(--mc-accent);}
