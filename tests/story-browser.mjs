@@ -21,6 +21,14 @@ try {
   await page.goto(origin+'/tests/fixture.html');
   if(process.env.META_FONT_FILE){const font=(await readFile(process.env.META_FONT_FILE)).toString('base64');await page.addStyleTag({content:`@font-face{font-family:MetaTestCJK;src:url(data:font/woff2;base64,${font})}#mc-root,.mc-story-prose{font-family:MetaTestCJK,serif!important}`});await page.evaluate(()=>document.fonts.ready);}
   await page.locator('#mc-wand-button').click();await page.waitForFunction(()=>document.querySelectorAll('#mc-profile option').length===2);await idle();await app('story');
+  // Host themes may paint native selects; only our name and chevron should be visible.
+  await page.addStyleTag({content:'#mc-profile{background:white!important;border:3px solid red!important;box-shadow:0 3px 4px red!important}'});
+  assert.equal(await page.locator('#mc-profile').evaluate(el=>getComputedStyle(el).opacity),'0');
+  assert.equal(await page.locator('#mc-profile-name').textContent(),'Alpha');
+  assert.equal(await page.locator('.mc-profile-chevron').isVisible(),true);
+  await page.locator('#mc-profile').selectOption({label:'Beta'});assert.equal(await page.locator('#mc-profile-name').textContent(),'Beta');
+  await page.locator('#mc-profile').selectOption({label:'Alpha'});assert.equal(await page.locator('#mc-profile-name').textContent(),'Alpha');
+  assert.equal(await page.locator('[data-section="memory"]').count(),0);
   await page.waitForFunction(()=>document.querySelector('.mc-story-footer output')?.textContent==='12 / 12');
   assert.equal(await page.locator('.mc-story-prose').count(),1);assert.equal(await page.locator('[name="includeTags"]').count(),0);
   assert.equal(await page.locator('[data-action="story-page"][data-step="1"]').isDisabled(),true);
@@ -46,13 +54,20 @@ try {
   const current=await state(),t=current.threads.find(t=>t.profileId===current.selected);assert.ok(t.story.floors.length<=12);assert.ok(t.story.floors.every(f=>f.index>=t.story.cutoff-11));
   assert.ok(!(await page.locator('.mc-story-prose').textContent()).includes('秘密状态'));
   const bounds=await page.evaluate(()=>{const body=document.querySelector('.mc-story-reading'),footer=document.querySelector('.mc-story-footer');return{scroll:body.scrollHeight>body.clientHeight,footer:footer.getBoundingClientRect().bottom<=document.querySelector('.mc-panel').getBoundingClientRect().bottom,overflow:document.querySelector('.mc-panel').scrollWidth>document.querySelector('.mc-panel').clientWidth+1};});assert.equal(bounds.scroll,true);assert.equal(bounds.footer,true);assert.equal(bounds.overflow,false);
-  await page.locator('#mc-notice').evaluate(el=>el.hidden=true);await page.screenshot({path:path.join(artifacts,`story-reader-v0120-${viewport.width}.png`)});
+  await page.locator('#mc-notice').evaluate(el=>el.hidden=true);await page.screenshot({path:path.join(artifacts,`story-reader-v0122-${viewport.width}.png`)});
   await page.locator('[data-action="annotate"]').click();await page.waitForSelector('.mc-story-annotation');await idle();
   assert.ok((await page.evaluate(()=>window.mockRequests.at(-1).prompt.map(m=>m.content).join('\n'))).includes('车库里只剩下'));assert.equal(await page.locator('.mc-story-prose').count(),0);
-  await page.locator('[data-section="memory"]').click();assert.ok((await page.locator('.mc-story-memory').textContent()).includes('更早的剧情摘要'));assert.equal(await page.locator('.mc-story-footer').count(),0);
+  await settings();assert.equal(await page.locator('[data-view="story-memory"]').evaluate(el=>el.open),false);
+  assert.equal(await page.locator('.mc-story-memory-text').isVisible(),false);
+  await page.locator('[data-view="story-memory"] summary').click();assert.ok((await page.locator('.mc-story-memory-text').textContent()).includes('更早的剧情摘要'));
+  await page.screenshot({path:path.join(artifacts,`story-memory-v0122-${viewport.width}.png`)});
+  await page.locator('.mc-back').click();await settings();assert.equal(await page.locator('[data-view="story-memory"]').evaluate(el=>el.open),false);
+  await page.screenshot({path:path.join(artifacts,`story-memory-collapsed-v0122-${viewport.width}.png`)});await page.locator('.mc-back').click();
   await page.locator('[data-section="prose"]').click();await settings();await page.locator('[name="recentFloors"]').fill('5');await page.locator('[data-action="save-story-settings"]').click();await saved();assert.ok(Number((await page.locator('.mc-story-footer output').textContent()).split('/')[1])<=5);
   assert.equal((await state()).settings.recentFloors,5);await app('settings');await page.locator('[data-section="history"] summary').click();assert.equal(await page.locator('[name="recentFloors"]').inputValue(),'5');await page.locator('[name="recentFloors"]').fill('6');await page.locator('[data-action="save-settings"]').click();await page.waitForFunction(()=>document.getElementById('mc-notice').textContent==='设置已保存。');await app('story');await settings();assert.equal(await page.locator('[name="recentFloors"]').inputValue(),'6');await page.locator('[name="storyMemorySource"]').selectOption('worldbook');await page.locator('[name="memoryBook"]').selectOption('测试世界');await page.waitForSelector('[name="memoryEntry"] option[value="0"]',{state:'attached'});await page.locator('[name="memoryEntry"]').selectOption('0');await page.locator('[data-action="save-story-settings"]').click();await saved();
-  await page.locator('[data-section="memory"]').click();assert.ok((await page.locator('.mc-story-memory').textContent()).includes('城市背景'));assert.equal((await state()).settings.storyMemorySource,'worldbook');
+  await settings();assert.equal(await page.locator('[data-view="story-memory"]').evaluate(el=>el.open),false);
+  await page.locator('[data-view="story-memory"] summary').click();assert.ok((await page.locator('.mc-story-memory-text').textContent()).includes('城市背景'));assert.ok((await page.locator('.mc-story-memory-meta').textContent()).includes('世界书'));assert.equal((await state()).settings.storyMemorySource,'worldbook');
+  await page.locator('.mc-back').click();
   await settings();await page.locator('[data-view="story-include"] summary').click();await page.locator('[name="includeTags"]').fill('未保存标签');await page.locator('.mc-back').click();assert.equal(await page.locator('.mc-story-settings').count(),0);await settings();assert.equal(await page.locator('[name="includeTags"]').inputValue(),'未保存标签');
   await page.locator('[name="includeTags"]').fill('正文');await page.locator('[data-action="save-story-settings"]').click();await saved();
   await page.evaluate(()=>{window.mockContext.getRegexScripts=()=>[{id:'comments',scriptName:'HTML注释-去除',findRegex:'/<!--[\\s\\S]*?-->/g',replaceString:'',placement:[2],disabled:false,markdownOnly:true,promptOnly:true}];window.mockContext.chat.push({name:'Alpha',mes:'<正文>清理后正文仍在<!-- Prism检查：问题=无；下一段=痕迹的积累 --><!-- 累计:738/不限 --></正文>'});window.mockEmit('MESSAGE_RECEIVED');});

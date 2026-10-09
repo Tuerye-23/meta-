@@ -501,3 +501,13 @@
 #mc-root .mc-story-regex-options select{width:auto;max-width:75%;padding:5px 1px;border:0;border-radius:0;background:transparent;font-size:11px;}
 #mc-root .mc-story-regex-advanced{border:0;background:#e9effb75;margin:10px 0 0;padding:10px 12px;border-radius:12px;}
 #mc-root .mc-story-regex-advanced>summary{font-size:11px;color:#7b8ca8;font-weight:400;}
+
+/* Render the role picker ourselves while retaining the native touch/keyboard menu. */
+#mc-root .mc-profile-picker{position:relative;display:inline-flex;align-items:center;gap:7px;max-width:100%;min-height:32px;padding:0;border:0;background:transparent;box-shadow:none;color:var(--mc-text);font-size:17px;font-weight:600;vertical-align:middle;}
+#mc-root #mc-profile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#mc-root .mc-profile-chevron{width:14px;height:14px;flex-shrink:0;color:#7b8ca7;}
+#mc-root .mc-profile-picker #mc-profile{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;margin:0!important;padding:0!important;opacity:0!important;cursor:pointer;}
+#mc-root .mc-profile-picker:has(#mc-profile:focus-visible){outline:2px solid #7f9de2;outline-offset:3px;border-radius:3px;}
+#mc-root .mc-panel[data-screen="story"] .mc-profile-picker{font-size:15px;}
+#mc-root .mc-story-memory-inspector .mc-story-memory-meta{margin:0 0 9px;font-size:10px;color:#8391a8;}
+#mc-root .mc-story-memory-inspector .mc-story-memory-text{max-height:280px;max-height:min(38dvh,280px);overflow:auto;overscroll-behavior:contain;font-size:12px;line-height:1.8;}
