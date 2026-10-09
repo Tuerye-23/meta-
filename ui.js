@@ -3,6 +3,7 @@ import { API_PARAMETERS, apiDefaults, normalizeApi } from './api-config.js';
 import { HEAD_PROMPT, AI_PROMPT } from './prompts.js';
 import { contactsScreen, contactTitle } from './contacts-ui.js';
 import { VERSION } from './core.js';
+import { storyScreen, storyPage, storyCompanion } from './story-ui.js';
 import { chatScreen, chatMessage, chatTimestamp } from './chat-ui.js';
 import { avatarScreen } from './avatars.js';
 import { homeScreen, momentsScreen, diaryScreen, icon, APPS } from './phone-ui.js';
@@ -13,13 +14,13 @@ const number = (label, name, value, min, max) => `<label class="mc-field"><span>
 
 export class Interface {
     constructor(host, action) {
-        this.chatPage='list';this.chatTools=false;this.chatMedia='';this.contactReturn='';this.avatarTarget=null;this.avatarSerial=0;
+        this.storyMode='reader';this.storySection='prose';this.storyPages=new Map();this.chatPage='list';this.chatTools=false;this.chatMedia='';this.contactReturn='';this.avatarTarget=null;this.avatarSerial=0;
         this.host = host; this.action = action; this.tab = 'home'; this.socialSheet=''; this.commentTarget=''; this.diaryTab='character'; this.momentPhotos=[]; this.open = false; this.previous = ''; this.drafts = new Map(); this.lastFocus = null; this.regexes=[]; this.entries=[]; this.entryBook=''; this.regexError=''; this.views=new Map(); this.viewKey=''; this.lastMarkup=''; this.desktopPosition=null;this.models=[];this.sourceDraft={cards:[],personaBook:"",personaEntries:[]};this.contactPage="list";this.editorId="";this.contactField="";this.contactSource="card";this.contactCandidates=[];this.candidateSelection=[];this.supplementDraft=[];this.pickerSelection=[];this.pickerEntries=[];this.pickerKind="";
         const root = document.createElement('div'); root.id = 'mc-root'; root.hidden = true;
         root.innerHTML = `<div class="mc-backdrop" data-action="close" data-tt-mobile-surface="backdrop"></div>
           <section class="mc-panel" role="dialog" aria-modal="true" aria-label="映间小手机" data-tt-mobile-surface="free-window">
             <div class="mc-statusbar"><time id="mc-status-time"></time><span class="mc-island" aria-hidden="true"></span><div class="mc-status-icons"><span id="mc-network" role="img" aria-label="网络状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 8a14 14 0 0 1 18 0M6 12a9 9 0 0 1 12 0M9 16a4 4 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></span><span id="mc-battery" role="img" aria-label="电量示意"><svg viewBox="0 0 28 16" aria-hidden="true"><rect x="1" y="2" width="22" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect id="mc-battery-fill" x="3" y="4" width="16" height="8" rx="1" fill="currentColor"/><path d="M25 6v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></div></div>
-            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><button type="button" id="mc-chat-title" data-action="chat-settings" hidden></button><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+            <header class="mc-header"><button type="button" class="mc-back" data-action="back" aria-label="返回首页"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4-8 8 8 8"/></svg></button><strong id="mc-app-title">映间</strong><button type="button" id="mc-chat-title" data-action="chat-settings" hidden></button><button type="button" id="mc-story-settings-button" data-action="story-settings" aria-label="读取设置" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-1 3-3 1v4l2 2-1 3 3 2 3-1 3 1 3-2-1-3 2-2V7l-3-1-1-3H9Z"/><circle cx="12" cy="11" r="3"/></svg></button><button type="button" data-action="close" aria-label="收起小手机"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
             <div class="mc-top"><span class="mc-avatar" aria-hidden="true">映</span><label><select id="mc-profile" aria-label="选择 meta 角色"></select><span id="mc-status"></span></label><span class="mc-meta-mark">META</span></div>
             <div id="mc-notice" role="status" hidden></div><main id="mc-content"></main>
             <button type="button" class="mc-home-button" data-action="tab" data-tab="home" aria-label="返回手机首页"><span></span></button>
@@ -30,7 +31,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(['replyStyle','proactiveEnabled'].includes(event.target.name))this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(event.target.name==='storyFollow')action('story-follow',{on:event.target.checked});if(event.target.name==='storyMemorySource')this.storyMemoryVisibility();if(['replyStyle','proactiveEnabled'].includes(event.target.name))this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();if(event.target.name==='notificationVolume')this.soundVolume();});
         root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
@@ -95,11 +96,14 @@ export class Interface {
         if (!this.previous) return;
         const values = {};
         for (const n of this.content.querySelectorAll('input[name],textarea[name],select[name]')) {
+            if(n.name==='regexIds' && n.type==='checkbox'){values.regexIds ??=[];if(n.checked)values.regexIds.push(n.value);continue;}
+            if(n.name==='storyFollow')continue;
             values[n.name] = n.type === 'checkbox' ? n.checked : n.multiple ? [...n.selectedOptions].map(o => o.value) : n.value;
         }
 
         this.drafts.set(this.previous, {...this.drafts.get(this.previous),...values});
     }
+    resetOtherDraftFields(names) {for(const [key,draft] of this.drafts)if(key!==this.previous)for(const name of names)delete draft[name];}
     clearDraft(name) { const key = this.previous; const d = this.drafts.get(key) || {}; d[name] = ''; this.drafts.set(key,d); const n=[...this.content.querySelectorAll("[name]")].find(el=>el.name===name); if(n)n.value=''; }
     resetDraft(names=null) {
         if(names){this.capture();const draft=this.drafts.get(this.previous) || {};for(const name of names)delete draft[name];this.drafts.set(this.previous,draft);this.lastMarkup='';}
@@ -150,12 +154,15 @@ export class Interface {
         }
         if(follow)list.scrollTop=list.scrollHeight;
     }
+    storySettingsKey() {return `story:global:settings`; }
+    storyMemoryVisibility() {const el=this.content.querySelector('[data-story-worldbook]');if(el)el.hidden=this.content.querySelector('[name="storyMemorySource"]')?.value!=='worldbook';}
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     chatDraft(profileId) {return this.drafts.get(`chat:${profileId}:thread::`)?.draft || '';}
     render(state, busy = false, session = null) {
         this.renderState=state;
         this.capture(); this.snapshotView();
-        const oldKey=this.viewKey; const newKey=this.avatarTarget?`avatar:${this.avatarTarget.kind}:${this.avatarTarget.id}:${this.avatarSerial}`:`${this.tab}:${['home','moments','diary','settings','roles'].includes(this.tab) || this.tab==='chat' && this.chatPage==='list'?'global':state.selected}:${this.tab==='diary'?this.diaryTab:this.tab==='chat'?this.chatPage:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}:${this.tab==='roles'?this.contactPage+':'+this.editorId+':'+this.contactField+':'+this.pickerKind:''}`; let markup='';
+        const reader=this.tab==='story'?storyPage(this,state):null;
+        const oldKey=this.viewKey; const newKey=this.tab==='story'?this.storyMode==='settings'?this.storySettingsKey(state.selected):`story:${state.selected}:${reader?.cursor.key}:${this.storySection}:${this.storySection==='prose'?reader?.floor?.index ?? 'empty':''}`:this.avatarTarget?`avatar:${this.avatarTarget.kind}:${this.avatarTarget.id}:${this.avatarSerial}`:`${this.tab}:${['home','moments','diary','settings','roles'].includes(this.tab) || this.tab==='chat' && this.chatPage==='list'?'global':state.selected}:${this.tab==='diary'?this.diaryTab:this.tab==='chat'?this.chatPage:''}:${['moments','diary'].includes(this.tab)?this.socialSheet:''}:${this.tab==='roles'?this.contactPage+':'+this.editorId+':'+this.contactField+':'+this.pickerKind:''}`; let markup='';
         const p = state.profiles.find(p => p.id === state.selected); const t = state.threads.find(t => t.profileId === p?.id);
         const select = this.root.querySelector('#mc-profile');
         select.innerHTML = state.profiles.length ? state.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">先添加一个角色</option>'; select.value = state.selected;
@@ -163,9 +170,12 @@ export class Interface {
         this.root.querySelector('.mc-avatar').textContent=p?.name?.slice(0,1) || '映';
         for (const b of this.root.querySelectorAll('[data-tab]')) { b.classList.toggle('mc-active', b.dataset.tab === this.tab); b.setAttribute('aria-current', b.dataset.tab === this.tab ? 'page' : 'false'); }
         this.root.querySelector('.mc-panel').dataset.screen=this.tab;
-        this.root.querySelector('.mc-top').hidden=this.avatarTarget || !['story','company'].includes(this.tab);
+        this.root.querySelector('.mc-top').hidden=this.avatarTarget || !['story','company'].includes(this.tab) || this.tab==='story' && this.storyMode==='settings';
+        this.root.querySelector('.mc-panel').dataset.storyMode=this.tab==='story'?this.storyMode:'';
+        this.root.querySelector('#mc-story-settings-button').hidden=this.tab!=='story' || this.storyMode==='settings';
+        if(this.tab==='story'){this.root.querySelector('.mc-top .mc-avatar').outerHTML=storyCompanion(state);}
         this.root.querySelector('.mc-back').hidden=this.tab==='home';
-        this.root.querySelector('#mc-app-title').textContent=this.tab==='roles'?contactTitle(this):this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
+        this.root.querySelector('#mc-app-title').textContent=this.tab==='story' && this.storyMode==='settings'?'读取设置':this.tab==='roles'?contactTitle(this):this.tab==='home'?'映间':APPS.find(x=>x[0]===this.tab)?.[1] || '映间';
         const threadOpen=this.tab==='chat' && this.chatPage==='thread' && p && !this.avatarTarget;
         this.root.querySelector('#mc-app-title').hidden=Boolean(threadOpen) || this.tab==='home' && !this.avatarTarget;
         this.root.querySelector('#mc-chat-title').hidden=!threadOpen;
@@ -182,21 +192,7 @@ export class Interface {
         if (this.tab === 'diary') markup=diaryScreen(state,this,busy);
         if (this.tab === 'chat') markup=chatScreen(state,this,busy);
         if (this.tab === 'roles') markup=contactsScreen(state,this,c,busy);
-        if (this.tab === 'story') markup = `<div class="mc-scroll"><div class="mc-section-title"><span>共同观看</span><small>自动跟随最新正文</small></div><p class="mc-muted">${esc(t?.story?.label || '等待当前主线出现正文')}</p>
-          <details open><summary>正文读取范围</summary><p>只读所选标签，或排除不想读的内容。正文标签和正则筛选作用于角色回复，用户消息保留。</p>
-          ${field('只提取这些标签（留空读取全部）','includeTags',s.includeTags,2)}${field('不读取这些标签','excludeTags',s.excludeTags,2)}
-          <p class="mc-muted">填写标签名即可，例如 正文、状态栏；多个标签用逗号或换行分开。正则和标签同时填写时，先提取正则匹配，再筛选标签。</p>
-          <div class="mc-toolbar"><button type="button" data-action="refresh-regex" ${disabled}>同步已启用正则</button></div>${this.regexError?`<p class="mc-muted">${esc(this.regexError)}</p>`:''}
-          <label class="mc-field"><span>选择正文正则（可多选，不运行替换 HTML）</span><select name="regexIds" multiple size="4">${this.regexes.map(r=>`<option value="${esc(r.id)}" ${(s.regexIds||[]).includes(r.id)?'selected':''}>${esc(r.scriptName||r.id)}</option>`).join('')}${(s.regexIds||[]).filter(id=>!this.regexes.some(r=>r.id===id)).map(id=>`<option value="${esc(id)}" selected>待刷新 / 已停用：${esc(id)}</option>`).join('')}</select></label>
-          ${number('读取捕获组（1 为 $1，0 为完整匹配）','regexCapture',s.regexCapture,0,20)}<p class="mc-muted">不选正则就使用标签设置；正则未匹配的角色回复不读入。</p></details>
-          <details open><summary>正文剧情记忆</summary><label class="mc-field"><span>记忆来源（二选一）</span><select name="storyMemorySource"><option value="baibai" ${s.storyMemorySource!=='worldbook'?'selected':''}>柏宝书接口</option><option value="worldbook" ${s.storyMemorySource==='worldbook'?'selected':''}>世界书指定条目</option></select></label>
-          <label class="mc-field"><span>世界书</span><select name="memoryBook"><option value="">请选择</option>${booksOptions(c,s.memoryBook)}</select></label>
-          <label class="mc-field"><span>记忆条目</span><select name="memoryEntry"><option value="">请选择条目</option>${this.entries.map(e=>`<option value="${esc(e.id)}" ${s.memoryEntry===e.id?'selected':''}>${esc(e.name)}${e.disabled?'（世界书中已关闭）':''}</option>`).join('')}</select></label><p class="mc-muted">世界书模式直接读取所选条目；柏宝书模式读取摘要及状态。最近正文仍会自动更新。</p></details>
-          <button type="button" class="mc-primary" data-action="save-story-settings" ${disabled}>保存读取设置</button>
-          ${(t?.story?.warnings||[]).length?`<p class="mc-muted">${esc(t.story.warnings.join('；'))}</p>`:''}<hr><div class="mc-section-title"><span>正在看的片段</span></div>
-          ${(t?.story?.floors || []).map(f => `<article class="mc-floor"><header>第 ${f.index+1} 条 · ${esc(f.name)}<button type="button" data-action="annotate" data-index="${f.index}" ${disabled}>请 ${esc(p?.name)} 批注</button></header><div>${esc(f.body)}</div></article>`).join('')}
-          ${t?.story ? `<details><summary>完整读取内容</summary><pre>${esc(t.story.text)}</pre></details>` : ''}
-          ${t?.annotations?.length ? `<h3>你们留下的批注</h3>${t.annotations.map(a => `<article class="mc-floor"><blockquote>${esc(a.quote)}</blockquote><div>${esc(a.reply)}</div><small>${esc(a.label)}</small></article>`).join('')}` : ''}</div>`;
+        if (this.tab === 'story') markup = storyScreen(state,this,busy,c);
         if (this.tab === 'company') markup = `<div class="mc-scroll"><div class="mc-company-card"><span class="mc-orbit">◌</span><strong>${session ? `和 ${esc(state.profiles.find(x=>x.id===session.profileId)?.name)} 一起` : '一起挂着'}</strong><p>${session ? esc(session.activity) : '打开这个空间，各自做点事，也能随时说话。'}</p><div id="mc-clock">00:00</div></div>
           <label class="mc-field"><span>一起做什么</span><input name="activity" value="${esc(s.activity)}" placeholder="陪我写东西 / 待一会儿 / 一起听歌"></label>
 
@@ -221,7 +217,7 @@ export class Interface {
           <button type="button" class="mc-primary" data-action="save-api" ${disabled}>保存 API 配置</button>${settingEnd}${settingStart('history','聊天记录设置','正文同步与聊天上下文','chat')}
           <form id="mc-settings-form"><label class="mc-check"><input type="checkbox" name="includeStory" ${s.includeStory?'checked':''}>聊天时携带主线剧情（关闭后也可以独立聊天）</label>
           <div class="mc-two">${number('最近读取的正文条数','recentFloors',s.recentFloors,1,60)}${number('最近 meta 消息条数','historyMessages',s.historyMessages,4,200)}</div>
-          <button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存聊天记录设置</button></form><p class="mc-muted">标签、正则及正文剧情记忆的读取来源，在「共看」中设置。</p><button type="button" data-action="tab" data-tab="story">正文读取设置</button>${settingEnd}${settingStart('notifications','消息提醒','提示音与音量','sound')}<label class="mc-field"><span>消息提示音</span><select name="notificationTone">${NOTIFICATION_TONES.map(([id,label])=>`<option value="${id}" ${s.notificationTone===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="mc-field mc-volume-field"><span>提示音音量 <output id="mc-sound-volume">${Math.round(s.notificationVolume*100)}%</output></span><input name="notificationVolume" type="range" min="0" max="100" step="1" value="${Math.round(s.notificationVolume*100)}" aria-label="提示音音量"></label><div class="mc-toolbar"><button type="button" data-action="preview-sound">试听</button><button type="button" class="mc-primary" data-action="save-notifications">保存消息提醒</button></div>${settingEnd}${settingStart('summary','Meta小手机自动总结','整理你们自己的聊天记忆','summary')}
+          <button type="button" class="mc-primary" data-action="save-settings" ${disabled}>保存聊天记录设置</button></form><p class="mc-muted">标签、正则及正文剧情记忆的读取来源，在「共看」中设置。</p><button type="button" data-action="story-settings">正文读取设置</button>${settingEnd}${settingStart('notifications','消息提醒','提示音与音量','sound')}<label class="mc-field"><span>消息提示音</span><select name="notificationTone">${NOTIFICATION_TONES.map(([id,label])=>`<option value="${id}" ${s.notificationTone===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="mc-field mc-volume-field"><span>提示音音量 <output id="mc-sound-volume">${Math.round(s.notificationVolume*100)}%</output></span><input name="notificationVolume" type="range" min="0" max="100" step="1" value="${Math.round(s.notificationVolume*100)}" aria-label="提示音音量"></label><div class="mc-toolbar"><button type="button" data-action="preview-sound">试听</button><button type="button" class="mc-primary" data-action="save-notifications">保存消息提醒</button></div>${settingEnd}${settingStart('summary','Meta小手机自动总结','整理你们自己的聊天记忆','summary')}
           <label class="mc-check"><input type="checkbox" name="autoSummary" ${s.autoSummary?'checked':''}>自动整理你们的聊天记忆</label><div class="mc-two">${number('积累多少条消息后总结','summaryEvery',s.summaryEvery,16,200)}${number('保留多少条近期原文','summaryKeep',s.summaryKeep,4,60)}</div><button type="button" class="mc-primary" data-action="save-summary-settings" ${disabled}>保存总结设置</button><p class="mc-muted">在 Meta 回复结束后检查条数，整理较早聊天，保留近期原文与完整记录。总结会额外调用一次当前模型。</p>
           <label class="mc-field"><span>查看哪位联系人的记忆</span><select name="summaryProfile">${state.profiles.map(p=>`<option value="${esc(p.id)}" ${p.id===state.selected?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
           ${p ? `<h3>${esc(p.name)} 的 meta 记忆</h3>${field('可手动修改，或让模型整理较早聊天','memory',t?.memory?.text,6)}<div class="mc-toolbar"><button type="button" data-action="save-memory" ${disabled}>保存记忆</button><button type="button" data-action="summarize" ${disabled}>整理聊天记忆</button></div><p class="mc-muted">整理只读取这个角色与你的 meta 聊天。完整记录保留，较早部分在发送时由摘要替代。</p>` : ''}
@@ -234,12 +230,12 @@ export class Interface {
         const saved = this.drafts.get(this.previous);
         if (saved) for (const n of this.content.querySelectorAll('input[name],textarea[name],select[name]')) {
             if (!(n.name in saved)) continue;
-            if (n.type==='checkbox') n.checked = saved[n.name];
+            if (n.type==='checkbox') n.checked = n.name==='regexIds'?saved[n.name].includes(n.value):saved[n.name];
             else if (n.multiple) for (const o of n.options) o.selected = saved[n.name].includes(o.value);
             else n.value = saved[n.name];
         }
 
-        this.apiVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();this.soundVolume();
+        this.apiVisibility();this.storyMemoryVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();this.soundVolume();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];

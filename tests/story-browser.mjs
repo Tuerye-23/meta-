@@ -1,0 +1,63 @@
+import { createServer } from 'node:http';
+import { readFile,mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url),{chromium}=require(require.resolve('playwright',{paths:[process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES || '']}));
+const base=path.resolve(import.meta.dirname,'..'),artifacts=path.resolve(base,'..','.test-output');await mkdir(artifacts,{recursive:true});
+const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4XcAAAAASUVORK5CYII=','base64');
+const server=createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/test-image.png'){res.setHeader('Content-Type','image/png');res.end(pixel);return;}const file=path.resolve(base,'.'+decodeURIComponent(pathname));if(!file.startsWith(base+path.sep)){res.writeHead(403).end();return;}const data=await readFile(file);res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(data);}catch{res.writeHead(404).end();}});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
+const browser=await chromium.launch({headless:true,...(process.env.META_CHROMIUM_PATH?{executablePath:process.env.META_CHROMIUM_PATH,args:['--no-sandbox','--disable-dev-shm-usage']}:{})});
+try {
+ for(const viewport of [{width:1280,height:800},{width:390,height:844},{width:320,height:650}]) {
+  const ctx=await browser.newContext({viewport,hasTouch:viewport.width<600,timezoneId:'Asia/Shanghai'}),page=await ctx.newPage(),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const idle=()=>page.waitForFunction(()=>!document.getElementById('mc-status').textContent.includes('正在输入'));
+  const state=()=>page.evaluate(async()=>{const key='meta-companion:state:'+localStorage.getItem('meta-companion:scope');const db=await new Promise(resolve=>{const r=indexedDB.open('st-meta-companion-native',1);r.onsuccess=()=>resolve(r.result);});return new Promise(resolve=>{const r=db.transaction('state','readonly').objectStore('state').get(key);r.onsuccess=()=>{resolve(r.result);db.close();};});});
+  const app=async tab=>{await page.locator('.mc-home-button').click();await page.locator(`.mc-app[data-tab="${tab}"]`).click();};
+  const settings=async()=>{await page.locator('#mc-story-settings-button').click();await page.waitForSelector('[name="regexIds"]',{state:'attached'});};
+  const saved=()=>page.waitForSelector('.mc-story-screen');
+  await page.goto(origin+'/tests/fixture.html');
+  if(process.env.META_FONT_FILE){const font=(await readFile(process.env.META_FONT_FILE)).toString('base64');await page.addStyleTag({content:`@font-face{font-family:MetaTestCJK;src:url(data:font/woff2;base64,${font})}#mc-root,.mc-story-prose{font-family:MetaTestCJK,serif!important}`});await page.evaluate(()=>document.fonts.ready);}
+  await page.locator('#mc-wand-button').click();await page.waitForFunction(()=>document.querySelectorAll('#mc-profile option').length===2);await idle();await app('story');
+  await page.waitForFunction(()=>document.querySelector('.mc-story-footer output')?.textContent==='12 / 12');
+  assert.equal(await page.locator('.mc-story-prose').count(),1);assert.equal(await page.locator('[name="includeTags"]').count(),0);
+  assert.equal(await page.locator('[data-action="story-page"][data-step="1"]').isDisabled(),true);
+  for(let i=0;i<11;i++)await page.locator('[data-step="-1"]').click();
+  assert.equal(await page.locator('.mc-story-footer output').textContent(),'1 / 12');assert.equal(await page.locator('.mc-story-prose').getAttribute('data-floor-index'),'8');
+  assert.equal(await page.locator('[data-step="-1"]').isDisabled(),true);assert.equal(await page.evaluate(()=>window.mockRequests.length),0);
+  await page.locator('[data-step="1"]').click();assert.equal(await page.locator('[name="storyFollow"]').isChecked(),false);
+  await page.evaluate(()=>{window.mockContext.chat.push({name:'Alpha',mes:'<正文>新正文21楼</正文>'});window.mockEmit('MESSAGE_RECEIVED');});
+  await page.waitForFunction(()=>document.querySelector('.mc-story-footer output')?.textContent==='1 / 12');assert.equal(await page.locator('.mc-story-prose').getAttribute('data-floor-index'),'9');
+  await page.locator('[name="storyFollow"]').check();await page.waitForFunction(()=>document.querySelector('.mc-story-prose')?.textContent.includes('新正文21楼'));
+  await settings();assert.equal(await page.locator('select[multiple]').count(),0);
+  await page.locator('[data-view="story-include"] summary').click();await page.locator('[name="includeTags"]').fill('正文');
+  await page.locator('[data-view="story-exclude"] summary').click();await page.locator('[name="excludeTags"]').fill('状态栏');
+  await page.locator('[data-view="story-regex"] summary').click();await page.locator('[name="regexIds"]').check();await page.locator('[name="regexCapture"]').selectOption('0');
+  await page.locator('[data-action="refresh-regex"]').click();assert.equal(await page.locator('[name="regexIds"]').isChecked(),true);assert.equal(await page.locator('[name="includeTags"]').inputValue(),'正文');
+  await page.locator('[data-view="story-include"] summary').click();await page.locator('[data-view="story-exclude"] summary').click();await page.locator('.mc-story-settings-scroll').evaluate(el=>el.scrollTop=0);await page.locator('#mc-notice').evaluate(el=>el.hidden=true);
+  await page.screenshot({path:path.join(artifacts,`story-settings-v0120-${viewport.width}.png`)});
+  await page.locator('[data-action="save-story-settings"]').click();await saved();
+  assert.equal(await page.locator('.mc-story-footer output').textContent(),'6 / 6');
+  await page.evaluate(()=>{window.mockContext.chat.push({name:'Alpha',mes:'<正文>车库里只剩下仪器低低的嗡鸣。\n\nRick 把扳手丢在工作台上，瞥了一眼亮起的屏幕。\n\n“又在看那边的我？”他挑了挑眉，“行，继续。我倒想知道他还能把事情搞得多糟。”\n\n你往下翻了一页。他没有催，只是把椅子拉近了一点。\n\n'+('屏幕的光映在工作台上。\n\n'.repeat(30))+'</正文><状态栏>秘密状态</状态栏>'});window.mockEmit('MESSAGE_RECEIVED');});
+  await page.waitForFunction(()=>document.querySelector('.mc-story-prose')?.textContent.includes('车库里'));
+
+  const current=await state(),t=current.threads.find(t=>t.profileId===current.selected);assert.ok(t.story.floors.length<=12);assert.ok(t.story.floors.every(f=>f.index>=t.story.cutoff-11));
+  assert.ok(!(await page.locator('.mc-story-prose').textContent()).includes('秘密状态'));
+  const bounds=await page.evaluate(()=>{const body=document.querySelector('.mc-story-reading'),footer=document.querySelector('.mc-story-footer');return{scroll:body.scrollHeight>body.clientHeight,footer:footer.getBoundingClientRect().bottom<=document.querySelector('.mc-panel').getBoundingClientRect().bottom,overflow:document.querySelector('.mc-panel').scrollWidth>document.querySelector('.mc-panel').clientWidth+1};});assert.equal(bounds.scroll,true);assert.equal(bounds.footer,true);assert.equal(bounds.overflow,false);
+  await page.locator('#mc-notice').evaluate(el=>el.hidden=true);await page.screenshot({path:path.join(artifacts,`story-reader-v0120-${viewport.width}.png`)});
+  await page.locator('[data-action="annotate"]').click();await page.waitForSelector('.mc-story-annotation');await idle();
+  assert.ok((await page.evaluate(()=>window.mockRequests.at(-1).prompt.map(m=>m.content).join('\n'))).includes('车库里只剩下'));assert.equal(await page.locator('.mc-story-prose').count(),0);
+  await page.locator('[data-section="memory"]').click();assert.ok((await page.locator('.mc-story-memory').textContent()).includes('更早的剧情摘要'));assert.equal(await page.locator('.mc-story-footer').count(),0);
+  await page.locator('[data-section="prose"]').click();await settings();await page.locator('[name="recentFloors"]').fill('5');await page.locator('[data-action="save-story-settings"]').click();await saved();assert.ok(Number((await page.locator('.mc-story-footer output').textContent()).split('/')[1])<=5);
+  assert.equal((await state()).settings.recentFloors,5);await app('settings');await page.locator('[data-section="history"] summary').click();assert.equal(await page.locator('[name="recentFloors"]').inputValue(),'5');await page.locator('[name="recentFloors"]').fill('6');await page.locator('[data-action="save-settings"]').click();await page.waitForFunction(()=>document.getElementById('mc-notice').textContent==='设置已保存。');await app('story');await settings();assert.equal(await page.locator('[name="recentFloors"]').inputValue(),'6');await page.locator('[name="storyMemorySource"]').selectOption('worldbook');await page.locator('[name="memoryBook"]').selectOption('测试世界');await page.waitForSelector('[name="memoryEntry"] option[value="0"]',{state:'attached'});await page.locator('[name="memoryEntry"]').selectOption('0');await page.locator('[data-action="save-story-settings"]').click();await saved();
+  await page.locator('[data-section="memory"]').click();assert.ok((await page.locator('.mc-story-memory').textContent()).includes('城市背景'));assert.equal((await state()).settings.storyMemorySource,'worldbook');
+  await settings();await page.locator('[data-view="story-include"] summary').click();await page.locator('[name="includeTags"]').fill('未保存标签');await page.locator('.mc-back').click();assert.equal(await page.locator('.mc-story-settings').count(),0);await settings();assert.equal(await page.locator('[name="includeTags"]').inputValue(),'未保存标签');
+  await page.locator('[name="includeTags"]').fill('正文');await page.locator('[data-action="save-story-settings"]').click();await saved();
+  await page.locator('[data-section="prose"]').click();await page.evaluate(()=>{window.mockContext.chatId='另一条主线';window.mockContext.chat=[{name:'Alpha',mes:'<正文>新主线只有一楼</正文>'}];window.mockEmit('CHAT_CHANGED');});await page.waitForFunction(()=>document.querySelector('.mc-story-footer output')?.textContent==='1 / 1');
+  assert.ok((await page.locator('.mc-story-prose').textContent()).includes('新主线只有一楼'));assert.deepEqual(errors,[]);
+  await app('chat');assert.equal(await page.locator('#mc-story-settings-button').isVisible(),false);
+  await ctx.close();console.log(`Story ${viewport.width}px: bounded pages / filtering / pause and follow / independent settings and drafts / annotation / memory / window change / switched chat passed`);
+ }
+}finally{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
