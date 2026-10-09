@@ -1,5 +1,5 @@
 import { createIndependentClient, readEventStream, responseText } from './api.js';
-import { characterKey, chunkSources, extractRegexStory, filterStory, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
+import { characterKey, chunkSources, cleanRegexStory, extractRegexStory, filterStory, storyRegexMode, literalMacros, mainKey, replaceNames, sourceFingerprint, text, uid, validateBackup, freshState } from './core.js';
 import { multimodalContent } from './chat-media.js';
 
 export function createHost(root = globalThis) {
@@ -249,6 +249,7 @@ export function createHost(root = globalThis) {
             } else warnings.push('柏宝书公开接口未就绪，本次读取最近正文');
             const selectedIds=settings.regexIds || [];
             const regexes=selectedIds.length ? (await enabledRegexes()).filter(s=>selectedIds.includes(s.id)) : [];
+            const extractors=regexes.filter(s=>storyRegexMode(s,settings.regexModes)==='extract');
             const missing=selectedIds.filter(id=>!regexes.some(s=>s.id===id));
             if(missing.length) throw new Error('所选正文正则已关闭或不在当前卡 / 预设中，请刷新列表并重新选择。');
             for (let index = start; index <= end; index++) {
@@ -257,9 +258,13 @@ export function createHost(root = globalThis) {
                 // Always filter original prose: BaiBai's floor cleaner may remove tags needed for extraction.
                 body=filterStory(body,{...settings,includeTags:''});
                 const applicable=regexes.filter(s=>s.placement.includes(message.is_user?1:2) && (s.minDepth==null || Number(s.minDepth)<0 || end-index>=Number(s.minDepth)) && (s.maxDepth==null || Number(s.maxDepth)<0 || end-index<=Number(s.maxDepth)));
-                if(regexes.length && !message.is_user) body=applicable.length ? extractRegexStory(body,applicable,settings.regexCapture) : '';
-                else if(applicable.length) body=extractRegexStory(body,applicable,settings.regexCapture);
-                body=filterStory(body,{...settings,includeTags:message.is_user?'':settings.includeTags});
+                const selected=applicable.filter(s=>storyRegexMode(s,settings.regexModes)==='extract');
+                body=cleanRegexStory(body,applicable.filter(s=>storyRegexMode(s,settings.regexModes)==='remove'));
+                // Keep tag wrappers until extraction, so a $1 extractor and tag selection can coexist.
+                body=filterStory(body,{...settings,includeTags:message.is_user?'':settings.includeTags},selected.length>0);
+                if(extractors.some(s=>s.placement.includes(2)) && !message.is_user)body=selected.length?extractRegexStory(body,selected,settings.regexCapture):'';
+                else if(selected.length)body=extractRegexStory(body,selected,settings.regexCapture);
+                body=filterStory(body,{...settings,includeTags:''});
                 if (body) floors.push({ index, name: text(message.name) || (message.is_user ? ctx.name1 : ctx.name2), body });
             }
             const label = `${ctx.name2 || '群聊'} · ${ctx.getCurrentChatId?.() || ctx.chatId} · 至第 ${end + 1} 条`;

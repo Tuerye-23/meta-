@@ -31,7 +31,7 @@ export class Interface {
             action(button.dataset.action, button.dataset);
         });
         root.querySelector('#mc-profile').addEventListener('change', event => action('select', { id: event.target.value }));
-        root.addEventListener('change', event => {if(event.target.name==='storyFollow')action('story-follow',{on:event.target.checked});if(event.target.name==='storyMemorySource')this.storyMemoryVisibility();if(['replyStyle','proactiveEnabled'].includes(event.target.name))this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
+        root.addEventListener('change', event => {if(event.target.name==='storyFollow')action('story-follow',{on:event.target.checked});if(event.target.name==='storyMemorySource')this.storyMemoryVisibility();if(event.target.name==='regexIds' || event.target.name?.startsWith('storyRegexMode:'))this.storyRegexVisibility();if(['replyStyle','proactiveEnabled'].includes(event.target.name))this.chatModeVisibility();if(['apiMode','apiProvider'].includes(event.target.name)){this.capture();this.apiVisibility();if(event.target.name==='apiProvider'){this.models=[];const list=this.content.querySelector('#mc-api-models');if(list)list.innerHTML='';}}if(event.target.name==='summaryProfile')action('select',{id:event.target.value});if(event.target.name==='memoryBook') action('memory-book',{book:event.target.value});});
         root.addEventListener('input',event=>{if(event.target.name==='contactSearch')this.filterContacts();if(event.target.name==='messageSearch')this.filterMessages();if(event.target.id==='mc-draft')this.sizeComposer();if(event.target.name==='notificationVolume')this.soundVolume();});
         root.addEventListener('error',event=>{if(event.target.matches?.('img[data-mc-avatar]'))event.target.hidden=true;},true);
         root.addEventListener('submit', event => event.preventDefault());
@@ -155,6 +155,7 @@ export class Interface {
         if(follow)list.scrollTop=list.scrollHeight;
     }
     storySettingsKey() {return `story:global:settings`; }
+    storyRegexVisibility() {let extraction=false;for(const row of this.content.querySelectorAll('.mc-story-regex-rule')){const checked=row.querySelector('[name="regexIds"]').checked;row.querySelector('.mc-story-regex-options').hidden=!checked;if(checked && row.querySelector('select').value==='extract')extraction=true;}const advanced=this.content.querySelector('.mc-story-regex-advanced');if(advanced)advanced.hidden=!extraction;}
     storyMemoryVisibility() {const el=this.content.querySelector('[data-story-worldbook]');if(el)el.hidden=this.content.querySelector('[name="storyMemorySource"]')?.value!=='worldbook';}
     values() { this.capture(); return this.drafts.get(this.previous) || {}; }
     chatDraft(profileId) {return this.drafts.get(`chat:${profileId}:thread::`)?.draft || '';}
@@ -235,7 +236,7 @@ export class Interface {
             else n.value = saved[n.name];
         }
 
-        this.apiVisibility();this.storyMemoryVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();this.soundVolume();
+        this.apiVisibility();this.storyMemoryVisibility();this.storyRegexVisibility();this.homeClock();this.filterContacts();this.filterMessages();this.sizeComposer();this.chatModeVisibility();this.soundVolume();
         if(replaced) {
             const view=this.views.get(newKey); const scroll=this.content.querySelector('.mc-scroll,.mc-messages');
             if(view)for(const [i,d] of [...this.content.querySelectorAll('details')].entries())if((d.dataset.view || String(i)) in view.details)d.open=view.details[d.dataset.view || String(i)];

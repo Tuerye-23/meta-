@@ -25,8 +25,8 @@ try {
     const alpha=(await state()).profiles.find(p=>p.name==='Alpha'),beta=(await state()).profiles.find(p=>p.name==='Beta');
     await app('roles');await page.locator(`[data-action="contact-open"][data-id="${alpha.id}"]`).click();assert.equal(await page.locator('[data-action="delete-chat"]').textContent(),'删除当前聊天');await page.locator('[data-action="contact-chat"]').click();
     await page.locator('#mc-draft').fill('第一句');await page.locator('#mc-draft').press('Enter');await page.waitForFunction(()=>document.querySelectorAll('[data-queued-id]').length===1);
-    await page.locator('#mc-draft').fill('第二句');await page.locator('[data-action="chat-stage"]').click();await page.waitForFunction(()=>document.querySelectorAll('[data-queued-id]').length===2);
-    assert.equal(await page.evaluate(()=>window.mockRequests.length),0);assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).messages.length,0);
+    await page.locator('#mc-draft').fill('第二句');await page.locator('#mc-draft').press('Enter');await page.waitForFunction(()=>document.querySelectorAll('[data-queued-id]').length===2);
+    assert.equal(await page.locator('.mc-compose-hint').count(),0);assert.equal(await page.locator('[data-action="chat-stage"]').count(),0);assert.equal(await page.evaluate(()=>window.mockRequests.length),0);assert.equal((await state()).threads.find(t=>t.profileId===alpha.id).messages.length,0);
     await page.locator('[data-queued-id] [data-action="chat-queued-delete"]').first().click();await page.waitForFunction(()=>document.querySelectorAll('[data-queued-id]').length===1);
     await tool('stickers');assert.equal(await page.locator('.mc-chat-tray').count(),0);assert.equal(await page.locator('.mc-emoji-picker').count(),0);
     const ratio=await page.locator('.mc-media-panel').evaluate(el=>el.getBoundingClientRect().height/document.querySelector('.mc-panel').getBoundingClientRect().height);assert.ok(ratio>.4 && ratio<.6,ratio);

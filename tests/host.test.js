@@ -68,3 +68,30 @@ test('QR persistence waits for successful backend save and rejects HTTP failures
     root.fetch=async(url,opts)=>{calls.push({url,body:JSON.parse(opts.body)});return new Response('',{status:503});};await assert.rejects(()=>createHost(root).saveQRSet(set),/保存失败/);assert.equal(refreshed,0);
     root.fetch=async()=>new Response('',{status:200});await createHost(root).saveQRSet(set);assert.equal(refreshed,1);assert.equal(calls[0].url,'/api/quick-replies/save');assert.equal(calls[0].body.qrList[0].message,'/meta');
 });
+
+
+test('HTML comment removal rules keep prose and unmatched floors without requiring a capture group',async()=>{
+    const {c,root}=fixture(),h=createHost(root);
+    const cleaner={id:'comments',scriptName:'HTML注释-去除',findRegex:'/<!--\\s*([\\s\\S]*?)\\s*-->/g',replaceString:'',placement:[2],disabled:false,markdownOnly:true,promptOnly:true};
+    c.getRegexScripts=()=>[cleaner];c.chat=[{is_user:true,name:'恒',mes:'用户正文'},{name:'Rick',mes:'前半段<!-- Prism检查: 问题=无;\n下一段=痕迹的积累 -->后半段<!-- 累计:738/不限 -->结尾'},{name:'Rick',mes:'没有注释的正文'}];
+    const original=JSON.stringify(c.chat),story=await h.story({...freshState().settings,regexIds:['comments'],regexCapture:20});
+    assert.deepEqual(story.floors.map(f=>f.body),['用户正文','前半段后半段结尾','没有注释的正文']);assert.equal(JSON.stringify(c.chat),original);
+    assert.equal((await h.enabledRegexes())[0].scriptName,'HTML注释-去除');
+});
+
+test('cleanup precedes extraction, tag selection works with $1, and per-rule modes survive backups',async()=>{
+    const {c,root}=fixture();c.chat=[{name:'Rick',mes:'<think><正文>假的</正文></think><正文>真正<!-- 备注 -->正文</正文><状态栏>秘密</状态栏>'}];
+    c.getRegexScripts=()=>[{id:'body',scriptName:'正文',findRegex:'/<正文>([\\s\\S]*?)<\\/正文>/g',replaceString:'<script>不要执行</script>',placement:[2]},{id:'comments',findRegex:'/<!--[\\s\\S]*?-->/g',replaceString:'',placement:[2]}];
+    const state=freshState();Object.assign(state.settings,{includeTags:'正文',excludeTags:'状态栏',regexIds:['body','comments'],regexModes:{body:'extract',comments:'remove'},regexCapture:1});
+    const story=await createHost(root).story(state.settings);assert.deepEqual(story.floors.map(f=>f.body),['真正正文']);assert.doesNotMatch(story.text,/假的|秘密|备注|script/);
+    const {validateBackup}=await import('../core.js');assert.deepEqual(validateBackup(state).settings.regexModes,{body:'extract',comments:'remove'});
+    delete state.settings.regexModes;assert.deepEqual(validateBackup(state).settings.regexModes,{});
+});
+
+test('cleanup obeys placement and depth, and empty-replacement rules can explicitly extract prose',async()=>{
+    const {c,root}=fixture();c.chat=[{name:'恒',is_user:true,mes:'用户<!-- 留下 -->'},{name:'Rick',mes:'较早<!-- 去除 -->'},{name:'Rick',mes:'最新<!-- 留下 -->'}];
+    c.getRegexScripts=()=>[{id:'comments',findRegex:'/<!--[\\s\\S]*?-->/g',replaceString:'',placement:[2],minDepth:1,maxDepth:1}];
+    const h=createHost(root),settings={...freshState().settings,regexIds:['comments']};assert.deepEqual((await h.story(settings)).floors.map(f=>f.body),['用户<!-- 留下 -->','较早','最新<!-- 留下 -->']);
+    c.chat=[{name:'Rick',mes:'<正文>只保留这个</正文>其他'}];c.getRegexScripts=()=>[{id:'body',findRegex:'/<正文>([\\s\\S]*?)<\\/正文>/g',replaceString:'',placement:[2]}];
+    assert.equal((await h.story({...settings,regexIds:['body'],regexModes:{body:'extract'}})).floors[0].body,'只保留这个');
+});

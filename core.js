@@ -6,7 +6,7 @@ import { avatarSource } from './images.js';
 import { normalizeAttachment, normalizeOutbox, normalizeStickers } from './chat-media.js';
 import { chatPreferences, shortChat, shortChatPrompt, groupStart } from './chat-mode.js';
 import { HEAD_PROMPT, AI_PROMPT, TASK_PROMPT, DEFINITIONS_AFTER, STORY_PROMPT, MEMORY_PROMPT, POST_HISTORY, POKE_PROMPT, PROACTIVE_PROMPT } from './prompts.js';
-export const VERSION = '0.12.0';
+export const VERSION = '0.12.1';
 export const uid = () => globalThis.crypto?.randomUUID?.() || `mc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const text = value => typeof value === 'string' ? value : '';
 export const clamp = (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
@@ -15,7 +15,7 @@ export function freshState() {
     return { schema: 1, version: VERSION, social:freshSocial(), stickers:[], profiles: [], threads: [], logs: [], extractions: {}, selected: '', settings: {
         includeStory: true, recentFloors: 12, historyMessages: 40,
         intervalMinutes: 10, maxProactive: 3, activity: '待一会儿', headPrompt: HEAD_PROMPT, aiPrompt: AI_PROMPT,
-        includeTags: '', excludeTags: '', regexIds: [], regexCapture: 1,
+        includeTags: '', excludeTags: '', regexIds: [], regexModes: {}, regexCapture: 1,
         storyMemorySource: 'baibai', memoryBook: '', memoryEntry: '',
         api:apiDefaults(), ...notificationPreferences(),
         autoSummary: false, summaryEvery: 40, summaryKeep: 12, summaryInstruction: '',
@@ -98,6 +98,7 @@ export function validateBackup(input) {
         activity: text(s.activity) || '待一会儿', headPrompt:typeof s.headPrompt==='string'?s.headPrompt.slice(0,30000):HEAD_PROMPT,aiPrompt:typeof s.aiPrompt==='string'?s.aiPrompt.slice(0,30000):AI_PROMPT,
         includeTags: text(s.includeTags), excludeTags: text(s.excludeTags),
         regexIds: Array.isArray(s.regexIds) ? [...new Set(s.regexIds.filter(x => typeof x === 'string'))].slice(0,100) : [],
+        regexModes: Object.fromEntries(Object.entries(s.regexModes || {}).filter(([id,mode])=>Array.isArray(s.regexIds) && s.regexIds.includes(id) && ['remove','extract'].includes(mode)).slice(0,100)),
         regexCapture: clamp(s.regexCapture,0,20,1),
         storyMemorySource: s.storyMemorySource === 'worldbook' ? 'worldbook' : 'baibai',
         memoryBook: text(s.memoryBook), memoryEntry: text(s.memoryEntry),
@@ -142,14 +143,14 @@ function tagRanges(body,name) {
     if(depth>0)ranges.push({start,end:body.length,text:body.slice(content)});
     return ranges;
 }
-export function filterStory(body, settings) {
+export function filterStory(body, settings, retainTags=false) {
     let result=text(body);
     // Remove excluded material before extraction, including unfinished reasoning blocks.
     for(const name of [...new Set(['think','thinking','analysis','script','style',...tagNames(settings.excludeTags)])]) for(const range of tagRanges(result,name).reverse())result=result.slice(0,range.start)+result.slice(range.end);
     const include=tagNames(settings.includeTags);
     if(include.length) {
         const blocks=[];
-        for(const name of include) for(const range of tagRanges(result,name)) blocks.push({at:range.start,text:range.text});
+        for(const name of include) for(const range of tagRanges(result,name)) blocks.push({at:range.start,text:retainTags?result.slice(range.start,range.end):range.text});
         result=blocks.sort((a,b)=>a.at-b.at).map(x=>x.text).join('\n\n');
     }
     return result.trim();
@@ -173,6 +174,21 @@ export function extractRegexStory(body, scripts, capture=1) {
         }
     }
     return blocks.sort((a,b)=>a.at-b.at).filter((v,i,a)=>!a.slice(0,i).some(x=>x.at===v.at&&x.text===v.text)).map(x=>x.text).join('\n\n').trim();
+}
+
+export function storyRegexMode(script, modes={}) {
+    if(['remove','extract'].includes(modes?.[script.id]))return modes[script.id];
+    return script.replaceString===''?'remove':'extract';
+}
+
+export function cleanRegexStory(body, scripts) {
+    let result=text(body);
+    for(const script of scripts) {
+        let regex;
+        try {regex=regexForStory(script.findRegex);}catch{throw new Error(`正则“${script.scriptName || script.id}”无法解析，请检查正则设置。`);}
+        result=result.replace(regex,'');
+    }
+    return result;
 }
 
 export function summaryBatch(thread, settings, automatic=false) {
